@@ -22,6 +22,7 @@ class MyselfBbsEpisodeListParser : EpisodeListParser {
                         )
                     }
                     .filter { it.pageUrl.startsWith("http://") || it.pageUrl.startsWith("https://") }
+                    .filterNot { it.pageUrl.contains("xfplay", ignoreCase = true) }
                     .preferInternalPlayer()
                 val playerUrl = sources.firstOrNull()?.pageUrl
                     ?: return@mapNotNull null
