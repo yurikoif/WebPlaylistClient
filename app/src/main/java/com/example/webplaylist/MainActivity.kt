@@ -17,9 +17,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -121,7 +123,11 @@ private fun WebPlaylistApp() {
     var isPlaying by remember { mutableStateOf(false) }
     var loopCurrentEpisode by remember { mutableStateOf(false) }
     var pendingAutoPlay by remember { mutableStateOf<Pair<Int, Long>?>(null) }
+    var focusPlayWhenShown by remember { mutableStateOf(false) }
     val rootFocusRequester = remember { FocusRequester() }
+    val playPauseFocusRequester = remember { FocusRequester() }
+    val currentEpisodeFocusRequester = remember { FocusRequester() }
+    val urlFocusRequester = remember { FocusRequester() }
 
     fun loadSeries(url: String) {
         scope.launch {
@@ -304,8 +310,19 @@ private fun WebPlaylistApp() {
         }
     }
 
-    LaunchedEffect(showPlaylist) {
-        if (!showPlaylist) rootFocusRequester.requestFocus()
+    fun showControlsAndPause() {
+        if (resolvedEpisodeUrl != null) player.pause()
+        focusPlayWhenShown = true
+        showPlaylist = true
+    }
+
+    LaunchedEffect(showPlaylist, focusPlayWhenShown) {
+        if (!showPlaylist) {
+            rootFocusRequester.requestFocus()
+        } else if (focusPlayWhenShown) {
+            playPauseFocusRequester.requestFocus()
+            focusPlayWhenShown = false
+        }
     }
 
     BackHandler(enabled = showPlaylist && resolvedEpisodeUrl != null) {
@@ -331,9 +348,14 @@ private fun WebPlaylistApp() {
                 if (
                     !showPlaylist &&
                     event.type == KeyEventType.KeyUp &&
-                    (event.key == Key.DirectionCenter || event.key == Key.Enter || event.key == Key.NumPadEnter)
+                    (
+                        event.key == Key.DirectionCenter ||
+                            event.key == Key.Enter ||
+                            event.key == Key.NumPadEnter ||
+                            event.key == Key.DirectionUp
+                        )
                 ) {
-                    showPlaylist = true
+                    showControlsAndPause()
                     true
                 } else {
                     false
@@ -371,13 +393,13 @@ private fun WebPlaylistApp() {
             if (showPlaylist) {
                 Column(
                     modifier = Modifier
-                        .padding(24.dp)
-                        .width(460.dp)
-                        .fillMaxHeight()
+                        .align(Alignment.TopCenter)
+                        .padding(top = 24.dp)
+                        .width(860.dp)
                         .clip(RoundedCornerShape(8.dp))
-                        .background(Color(0xEE101418))
+                        .background(Color(0xAA101418))
                         .border(1.dp, Color(0x663A4654), RoundedCornerShape(8.dp))
-                        .padding(18.dp),
+                        .padding(16.dp),
                 ) {
                     Row(
                         modifier = Modifier
@@ -399,68 +421,35 @@ private fun WebPlaylistApp() {
                             )
                         }
                         if (resolvedEpisodeUrl != null) {
-                            Button(onClick = { showPlaylist = false }) {
+                            Button(
+                                onClick = { showPlaylist = false },
+                                colors = translucentButtonColors(),
+                            ) {
                                 Text("Hide")
                             }
                         }
                     }
-                    Spacer(Modifier.height(14.dp))
-
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(
-                            onClick = { playPrevious() },
-                            enabled = selectedEpisode > 0,
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Text("Prev")
-                        }
-                        Button(
-                            onClick = {
-                                if (player.isPlaying) {
-                                    player.pause()
-                                } else {
-                                    player.play()
-                                }
-                            },
-                            enabled = resolvedEpisodeUrl != null,
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Text(if (isPlaying) "Pause" else "Play")
-                        }
-                        Button(
-                            onClick = { playNext() },
-                            enabled = selectedEpisode < (series?.episodes?.lastIndex ?: 0),
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Text("Next")
-                        }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    Button(
-                        onClick = { loopCurrentEpisode = !loopCurrentEpisode },
-                        enabled = resolvedEpisodeUrl != null,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(if (loopCurrentEpisode) "Mode: Loop episode" else "Mode: Next episode")
-                    }
-                    Spacer(Modifier.height(14.dp))
-
+                    Spacer(Modifier.height(10.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         OutlinedTextField(
                             value = urlInput,
                             onValueChange = { urlInput = it },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier
+                                .weight(1f)
+                                .focusRequester(urlFocusRequester),
                             singleLine = true,
                             label = { Text("Series URL") },
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
                             keyboardActions = KeyboardActions(onGo = { openEnteredUrl() }),
                         )
-                        Button(onClick = { openEnteredUrl() }) {
+                        Button(
+                            onClick = { openEnteredUrl() },
+                            colors = translucentButtonColors(),
+                        ) {
                             Text("Open")
                         }
                     }
                     Spacer(Modifier.height(10.dp))
-
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         OutlinedTextField(
                             value = query,
@@ -471,55 +460,132 @@ private fun WebPlaylistApp() {
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                             keyboardActions = KeyboardActions(onSearch = { search() }),
                         )
-                        Button(onClick = { search() }) {
+                        Button(
+                            onClick = { search() },
+                            colors = translucentButtonColors(),
+                        ) {
                             Text("Search")
                         }
                     }
-                    Spacer(Modifier.height(14.dp))
                     if (loading) {
-                        CircularProgressIndicator(color = Color(0xFF78D5C6))
                         Spacer(Modifier.height(10.dp))
+                        CircularProgressIndicator(color = Color(0xFF78D5C6))
                     }
                     error?.let {
-                        Text(text = it, color = Color(0xFFFFB199))
                         Spacer(Modifier.height(10.dp))
+                        Text(text = it, color = Color(0xFFFFB199))
                     }
                     if (results.isNotEmpty()) {
+                        Spacer(Modifier.height(10.dp))
                         Text("Series Results", color = Color.White, style = MaterialTheme.typography.titleMedium)
                         Spacer(Modifier.height(8.dp))
-                        LazyColumn(
+                        LazyRow(
                             modifier = Modifier
-                                .height(160.dp)
                                 .fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             itemsIndexed(results) { _, result ->
-                                FocusButton(
+                                EpisodeRailButton(
                                     text = result.title,
                                     selected = series?.url == result.url,
+                                    modifier = Modifier.width(240.dp),
                                     onClick = { loadSeries(result.url) },
                                 )
                             }
                         }
-                        Spacer(Modifier.height(14.dp))
                     }
-                    Text(
-                        text = series?.title ?: "Episodes",
-                        color = Color.White,
-                        style = MaterialTheme.typography.titleMedium,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
+                }
+
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .onPreviewKeyEvent { event ->
+                            if (event.type != KeyEventType.KeyUp) return@onPreviewKeyEvent false
+                            when (event.key) {
+                                Key.DirectionUp -> {
+                                    urlFocusRequester.requestFocus()
+                                    true
+                                }
+                                Key.DirectionDown -> {
+                                    currentEpisodeFocusRequester.requestFocus()
+                                    true
+                                }
+                                else -> false
+                            }
+                        },
+                    horizontalArrangement = Arrangement.spacedBy(36.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TransportButton(
+                        label = "|<",
+                        enabled = selectedEpisode > 0,
+                        onClick = { playPrevious() },
                     )
-                    Spacer(Modifier.height(8.dp))
-                    if (series?.episodes.isNullOrEmpty()) {
-                        Text(
-                            text = "No episodes loaded",
-                            color = Color(0xFFB8C3CC),
-                        )
-                    } else {
-                        LazyColumn(
-                            modifier = Modifier.fillMaxSize(),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                    TransportButton(
+                        label = if (isPlaying) "||" else ">",
+                        enabled = resolvedEpisodeUrl != null,
+                        modifier = Modifier.focusRequester(playPauseFocusRequester),
+                        onClick = {
+                            if (player.isPlaying) {
+                                player.pause()
+                            } else {
+                                player.play()
+                            }
+                        },
+                    )
+                    TransportButton(
+                        label = ">|",
+                        enabled = selectedEpisode < (series?.episodes?.lastIndex ?: 0),
+                        onClick = { playNext() },
+                    )
+                }
+
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp, vertical = 22.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xAA101418))
+                        .border(1.dp, Color(0x663A4654), RoundedCornerShape(8.dp))
+                        .padding(16.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = series?.title ?: "Episodes",
+                                color = Color.White,
+                                style = MaterialTheme.typography.titleMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = if (loopCurrentEpisode) "Mode: loop current episode" else "Mode: next episode",
+                                color = Color(0xFFB8C3CC),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                        Button(
+                            onClick = { loopCurrentEpisode = !loopCurrentEpisode },
+                            enabled = resolvedEpisodeUrl != null,
+                            colors = translucentButtonColors(),
+                        ) {
+                            Text(if (loopCurrentEpisode) "Loop" else "Next")
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        text = if (series?.episodes.isNullOrEmpty()) "No episodes loaded" else "",
+                        color = Color(0xFFB8C3CC),
+                    )
+                    if (!series?.episodes.isNullOrEmpty()) {
+                        LazyRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
                             itemsIndexed(series?.episodes.orEmpty()) { index, episode ->
                                 val resume = if (index == progressStore.lastEpisodeIndex()) {
@@ -527,9 +593,16 @@ private fun WebPlaylistApp() {
                                 } else {
                                     0L
                                 }
-                                FocusButton(
+                                EpisodeRailButton(
                                     text = episode.title,
                                     selected = index == selectedEpisode,
+                                    modifier = if (index == selectedEpisode) {
+                                        Modifier
+                                            .width(240.dp)
+                                            .focusRequester(currentEpisodeFocusRequester)
+                                    } else {
+                                        Modifier.width(240.dp)
+                                    },
                                     onClick = { playEpisode(index, resume) },
                                 )
                             }
@@ -538,7 +611,7 @@ private fun WebPlaylistApp() {
                 }
             } else {
                 Text(
-                    text = "Select",
+                    text = "OK / Up",
                     color = Color(0x99FFFFFF),
                     style = MaterialTheme.typography.labelLarge,
                     modifier = Modifier
@@ -554,9 +627,44 @@ private fun WebPlaylistApp() {
 }
 
 @Composable
-private fun FocusButton(
+private fun TransportButton(
+    label: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var focused by remember { mutableStateOf(false) }
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier
+            .size(92.dp)
+            .onFocusChanged { focused = it.isFocused }
+            .border(
+                width = if (focused) 3.dp else 1.dp,
+                color = if (focused) Color(0xFF78D5C6) else Color(0x66FFFFFF),
+                shape = CircleShape,
+            ),
+        shape = CircleShape,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = if (focused) Color(0xCC2F4657) else Color(0x77111820),
+            contentColor = Color.White,
+            disabledContainerColor = Color(0x44111820),
+            disabledContentColor = Color(0x66FFFFFF),
+        ),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.headlineMedium,
+        )
+    }
+}
+
+@Composable
+private fun EpisodeRailButton(
     text: String,
     selected: Boolean,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -568,25 +676,32 @@ private fun FocusButton(
 
     Button(
         onClick = onClick,
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(48.dp)
+        modifier = modifier
+            .height(58.dp)
             .onFocusChanged { focused = it.isFocused }
             .border(2.dp, borderColor, RoundedCornerShape(6.dp)),
         shape = RoundedCornerShape(6.dp),
         colors = ButtonDefaults.buttonColors(
-            containerColor = if (selected) Color(0xFF29384A) else Color(0xFF1C232B),
+            containerColor = if (selected) Color(0xCC29384A) else Color(0x991C232B),
             contentColor = Color.White,
         ),
     ) {
         Text(
             text = text,
-            maxLines = 1,
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.fillMaxWidth(),
         )
     }
 }
+
+@Composable
+private fun translucentButtonColors() = ButtonDefaults.buttonColors(
+    containerColor = Color(0x991C2833),
+    contentColor = Color.White,
+    disabledContainerColor = Color(0x551C2833),
+    disabledContentColor = Color(0x77FFFFFF),
+)
 
 private const val DEFAULT_SERIES_URL = "https://myself-bbs.com/thread-44169-1-1.html"
 private const val USER_AGENT = "Mozilla/5.0"

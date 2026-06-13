@@ -27,9 +27,13 @@ https://myself-bbs.com/thread-44169-1-1.html
 The app is intentionally full-screen-first:
 
 - The video player fills the entire TV screen.
-- Pressing the remote Select/center button while watching opens the floating playlist overlay.
+- Pressing remote OK/Select while watching pauses playback, opens floating controls, and focuses play/pause.
+- Pressing Up while watching also pauses playback and opens the floating controls.
 - Selecting an episode hides the overlay and returns to full-screen video.
-- The overlay contains direct URL entry, search, playlist, previous, play/pause, next, and next/loop mode controls.
+- The URL/search panel floats above the transport controls.
+- Previous, play/pause, and next float in the center of the screen with YouTube-style transport symbols.
+- The playlist floats at the bottom as a horizontal episode rail.
+- From the transport controls, Up focuses the URL panel and Down focuses the current episode in the playlist rail.
 - Back hides the overlay when video is already loaded.
 
 Supported direct URLs currently match the Discuz thread format:
