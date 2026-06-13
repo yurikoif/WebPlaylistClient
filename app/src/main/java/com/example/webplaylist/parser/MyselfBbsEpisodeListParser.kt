@@ -15,14 +15,17 @@ class MyselfBbsEpisodeListParser : EpisodeListParser {
                     .mapNotNull { link ->
                         val href = link.attr("data-href").cleanHref()
                             .takeIf { it.isNotBlank() }
+                            ?.takeUnless { it.contains("xfplay", ignoreCase = true) }
+                            ?: return@mapNotNull null
+                        val pageUrl = runCatching { URI(seriesUrl).resolve(href).toString() }
+                            .getOrNull()
                             ?: return@mapNotNull null
                         EpisodeSource(
                             label = link.text().trim().ifBlank { "Source" },
-                            pageUrl = URI(seriesUrl).resolve(href).toString(),
+                            pageUrl = pageUrl,
                         )
                     }
                     .filter { it.pageUrl.startsWith("http://") || it.pageUrl.startsWith("https://") }
-                    .filterNot { it.pageUrl.contains("xfplay", ignoreCase = true) }
                     .preferInternalPlayer()
                 val playerUrl = sources.firstOrNull()?.pageUrl
                     ?: return@mapNotNull null
