@@ -28,10 +28,11 @@ The app is intentionally full-screen-first:
 - Pressing remote OK/Select while watching pauses playback, opens floating controls, and focuses play/pause.
 - Pressing directional keys while watching opens floating controls without pausing.
 - Short-pressing Left/Right while watching opens floating controls focused on back/forward 10 seconds.
-- Long-pressing Left/Right while watching seeks backward/forward by 30 seconds per repeat.
+- Long-pressing Left/Right while watching waits 500ms, then seeks backward/forward by 30 seconds every 700ms while held.
 - Selecting an episode hides the overlay and returns to full-screen video.
 - The URL panel floats above the transport controls.
-- Previous episode, back 10 seconds, play/pause, forward 10 seconds, and next episode float in the center of the screen with drawn media icons.
+- Previous episode, -10s, play/pause, +10s, and next episode float in the center of the screen.
+- A floating progress bar appears below the transport controls and above the playlist, with current time / video length below the bar.
 - The playlist floats at the bottom as a horizontal episode rail.
 - From the transport controls, Up focuses the URL panel and Down focuses the current episode in the playlist rail.
 - Back hides the overlay when video is already loaded.
@@ -44,6 +45,17 @@ thread-44169-1-1.html
 ```
 
 Progress is saved periodically and when Android sends pause/stop lifecycle events, so reopening the app resumes the remembered series, episode, and timestamp.
+
+Seek tuning is controlled in `MainActivity.kt`:
+
+```text
+SEEK_STEP_MS = 10_000L
+LONG_PRESS_SEEK_STEP_MS = 30_000L
+LONG_PRESS_START_MS = 500L
+LONG_PRESS_SEEK_REPEAT_MS = 700L
+```
+
+With the current values, holding Left/Right first waits 0.5 seconds, then moves roughly 30 seconds every 0.7 seconds, or about 43 seconds of video per real second after seeking starts.
 
 The app does not attempt to bypass DRM, login, payment, captcha, or other access controls.
 

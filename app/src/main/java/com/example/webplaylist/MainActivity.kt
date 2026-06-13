@@ -11,6 +11,7 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -82,6 +83,7 @@ import com.example.webplaylist.resolver.HtmlMediaUrlResolver
 import com.example.webplaylist.resolver.VpxWebSocketMediaUrlResolver
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 
@@ -132,6 +134,8 @@ private fun WebPlaylistApp() {
     var focusEpisodeWhenShown by remember { mutableStateOf(false) }
     var seekJob by remember { mutableStateOf<Job?>(null) }
     var leftRightPressHandledAsSeek by remember { mutableStateOf(false) }
+    var playbackPositionMs by remember { mutableLongStateOf(progressStore.lastPositionMs()) }
+    var playbackDurationMs by remember { mutableLongStateOf(0L) }
     val rootFocusRequester = remember { FocusRequester() }
     val playPauseFocusRequester = remember { FocusRequester() }
     val back10FocusRequester = remember { FocusRequester() }
@@ -309,8 +313,10 @@ private fun WebPlaylistApp() {
 
     LaunchedEffect(player, selectedEpisode) {
         while (true) {
-            delay(5000)
+            delay(500)
             val position = player.currentPosition.coerceAtLeast(0L)
+            playbackPositionMs = position
+            playbackDurationMs = player.duration.takeIf { it > 0L } ?: 0L
             if (position != lastSavedPosition) {
                 lastSavedPosition = position
                 progressStore.saveProgress(selectedEpisode, position)
@@ -382,6 +388,8 @@ private fun WebPlaylistApp() {
         val duration = player.duration.takeIf { it > 0L } ?: Long.MAX_VALUE
         val target = (player.currentPosition + deltaMs).coerceIn(0L, duration)
         player.seekTo(target)
+        playbackPositionMs = target
+        playbackDurationMs = player.duration.takeIf { it > 0L } ?: playbackDurationMs
         progressStore.saveProgress(selectedEpisode, target)
         lastSavedPosition = target
     }
@@ -402,11 +410,11 @@ private fun WebPlaylistApp() {
                             if (seekJob == null) {
                                 leftRightPressHandledAsSeek = false
                                 seekJob = scope.launch {
-                                    delay(LONG_PRESS_SEEK_MS)
-                                    while (true) {
+                                    delay(LONG_PRESS_START_MS)
+                                    while (isActive) {
                                         seekBy(delta)
                                         leftRightPressHandledAsSeek = true
-                                        delay(REPEAT_SEEK_MS)
+                                        delay(LONG_PRESS_SEEK_REPEAT_MS)
                                     }
                                 }
                             }
@@ -560,7 +568,7 @@ private fun WebPlaylistApp() {
                     }
                 }
 
-                Row(
+                Column(
                     modifier = Modifier
                         .align(Alignment.Center)
                         .onPreviewKeyEvent { event ->
@@ -577,42 +585,51 @@ private fun WebPlaylistApp() {
                                 else -> false
                             }
                         },
-                    horizontalArrangement = Arrangement.spacedBy(24.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    TransportButton(
-                        icon = TransportIcon.Previous,
-                        enabled = selectedEpisode > 0,
-                        onClick = { playPrevious() },
-                    )
-                    TransportButton(
-                        icon = TransportIcon.Back10,
-                        enabled = resolvedEpisodeUrl != null,
-                        modifier = Modifier.focusRequester(back10FocusRequester),
-                        onClick = { seekBy(-SEEK_STEP_MS) },
-                    )
-                    TransportButton(
-                        icon = if (isPlaying) TransportIcon.Pause else TransportIcon.Play,
-                        enabled = resolvedEpisodeUrl != null,
-                        modifier = Modifier.focusRequester(playPauseFocusRequester),
-                        onClick = {
-                            if (player.isPlaying) {
-                                player.pause()
-                            } else {
-                                player.play()
-                            }
-                        },
-                    )
-                    TransportButton(
-                        icon = TransportIcon.Forward10,
-                        enabled = resolvedEpisodeUrl != null,
-                        modifier = Modifier.focusRequester(forward10FocusRequester),
-                        onClick = { seekBy(SEEK_STEP_MS) },
-                    )
-                    TransportButton(
-                        icon = TransportIcon.Next,
-                        enabled = selectedEpisode < (series?.episodes?.lastIndex ?: 0),
-                        onClick = { playNext() },
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(24.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TransportButton(
+                            icon = TransportIcon.Previous,
+                            enabled = selectedEpisode > 0,
+                            onClick = { playPrevious() },
+                        )
+                        TransportButton(
+                            icon = TransportIcon.Back10,
+                            enabled = resolvedEpisodeUrl != null,
+                            modifier = Modifier.focusRequester(back10FocusRequester),
+                            onClick = { seekBy(-SEEK_STEP_MS) },
+                        )
+                        TransportButton(
+                            icon = if (isPlaying) TransportIcon.Pause else TransportIcon.Play,
+                            enabled = resolvedEpisodeUrl != null,
+                            modifier = Modifier.focusRequester(playPauseFocusRequester),
+                            onClick = {
+                                if (player.isPlaying) {
+                                    player.pause()
+                                } else {
+                                    player.play()
+                                }
+                            },
+                        )
+                        TransportButton(
+                            icon = TransportIcon.Forward10,
+                            enabled = resolvedEpisodeUrl != null,
+                            modifier = Modifier.focusRequester(forward10FocusRequester),
+                            onClick = { seekBy(SEEK_STEP_MS) },
+                        )
+                        TransportButton(
+                            icon = TransportIcon.Next,
+                            enabled = selectedEpisode < (series?.episodes?.lastIndex ?: 0),
+                            onClick = { playNext() },
+                        )
+                    }
+                    Spacer(Modifier.height(18.dp))
+                    PlaybackProgressPanel(
+                        positionMs = playbackPositionMs,
+                        durationMs = playbackDurationMs,
                     )
                 }
 
@@ -716,6 +733,7 @@ private fun TransportButton(
             disabledContainerColor = Color(0x22FFFFFF),
             disabledContentColor = Color(0x66FFFFFF),
         ),
+        contentPadding = PaddingValues(0.dp),
     ) {
         TransportGlyph(icon = icon, enabled = enabled)
     }
@@ -739,53 +757,62 @@ private enum class OverlayFocusTarget {
 }
 
 @Composable
+private fun PlaybackProgressPanel(
+    positionMs: Long,
+    durationMs: Long,
+) {
+    val progress = if (durationMs > 0L) {
+        (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+    } else {
+        0f
+    }
+
+    Column(
+        modifier = Modifier
+            .width(620.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color(0xAA101418))
+            .border(1.dp, Color(0x663A4654), RoundedCornerShape(8.dp))
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(6.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(Color(0x44FFFFFF)),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(progress)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color.White),
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = "${formatPlaybackTime(positionMs)} / ${formatPlaybackTime(durationMs)}",
+            color = Color(0xFFB8C3CC),
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.align(Alignment.End),
+        )
+    }
+}
+
+@Composable
 private fun TransportGlyph(
     icon: TransportIcon,
     enabled: Boolean,
 ) {
     val glyphColor = if (enabled) Color.White else Color(0x66FFFFFF)
     if (icon == TransportIcon.Back10 || icon == TransportIcon.Forward10) {
-        Box(
-            modifier = Modifier.size(38.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                val w = size.width
-                val h = size.height
-                if (icon == TransportIcon.Back10) {
-                    drawCircle(
-                        glyphColor,
-                        radius = w * 0.08f,
-                        center = androidx.compose.ui.geometry.Offset(w * 0.18f, h * 0.5f),
-                    )
-                    val path = Path().apply {
-                        moveTo(w * 0.44f, h * 0.26f)
-                        lineTo(w * 0.44f, h * 0.74f)
-                        lineTo(w * 0.16f, h * 0.5f)
-                        close()
-                    }
-                    drawPath(path, glyphColor)
-                } else {
-                    val path = Path().apply {
-                        moveTo(w * 0.56f, h * 0.26f)
-                        lineTo(w * 0.56f, h * 0.74f)
-                        lineTo(w * 0.84f, h * 0.5f)
-                        close()
-                    }
-                    drawPath(path, glyphColor)
-                    drawCircle(
-                        glyphColor,
-                        radius = w * 0.08f,
-                        center = androidx.compose.ui.geometry.Offset(w * 0.82f, h * 0.5f),
-                    )
-                }
-            }
-            Text(
-                text = "10",
-                color = glyphColor,
-                style = MaterialTheme.typography.labelMedium,
-            )
-        }
+        Text(
+            text = if (icon == TransportIcon.Back10) "-10s" else "+10s",
+            color = glyphColor,
+            style = MaterialTheme.typography.labelLarge,
+            maxLines = 1,
+        )
         return
     }
 
@@ -879,6 +906,18 @@ private const val DEFAULT_SERIES_URL = "https://myself-bbs.com/thread-44169-1-1.
 private const val USER_AGENT = "Mozilla/5.0"
 private const val SEEK_STEP_MS = 10_000L
 private const val LONG_PRESS_SEEK_STEP_MS = 30_000L
-private const val LONG_PRESS_SEEK_MS = 450L
-private const val REPEAT_SEEK_MS = 250L
+private const val LONG_PRESS_START_MS = 500L
+private const val LONG_PRESS_SEEK_REPEAT_MS = 700L
 private val seriesUrlPattern = Regex("""https?://(?:www\.)?myself-bbs\.com/thread-\d+-\d+-\d+\.html""")
+
+private fun formatPlaybackTime(ms: Long): String {
+    val totalSeconds = (ms / 1000L).coerceAtLeast(0L)
+    val hours = totalSeconds / 3600L
+    val minutes = (totalSeconds % 3600L) / 60L
+    val seconds = totalSeconds % 60L
+    return if (hours > 0L) {
+        "%d:%02d:%02d".format(hours, minutes, seconds)
+    } else {
+        "%d:%02d".format(minutes, seconds)
+    }
+}
