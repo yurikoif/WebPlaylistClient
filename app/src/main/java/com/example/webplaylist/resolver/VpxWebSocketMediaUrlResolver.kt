@@ -38,7 +38,7 @@ class VpxWebSocketMediaUrlResolver(
                     try {
                         val json = JSONObject(text)
                         if (json.optString("status") == "ok") {
-                            val video = json.optString("video")
+                            val video = json.optString("video").toPlayableUrl()
                             if (video.isNotBlank()) {
                                 if (continuation.isActive) continuation.resume(video)
                                 webSocket.close(1000, null)
@@ -71,5 +71,12 @@ class VpxWebSocketMediaUrlResolver(
             .find(html)
             ?.groupValues
             ?.get(1)
+    }
+
+    private fun String.toPlayableUrl(): String {
+        return when {
+            startsWith("//") -> "https:$this"
+            else -> this
+        }
     }
 }

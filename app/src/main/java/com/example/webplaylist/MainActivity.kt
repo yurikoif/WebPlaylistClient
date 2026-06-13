@@ -58,8 +58,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.hls.HlsMediaSource
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.example.webplaylist.data.LoadedSeries
@@ -115,6 +120,7 @@ private fun WebPlaylistApp() {
     var showPlaylist by remember { mutableStateOf(true) }
     var isPlaying by remember { mutableStateOf(false) }
     var loopCurrentEpisode by remember { mutableStateOf(false) }
+    var pendingAutoPlay by remember { mutableStateOf<Pair<Int, Long>?>(null) }
     val rootFocusRequester = remember { FocusRequester() }
 
     fun loadSeries(url: String) {
@@ -124,8 +130,9 @@ private fun WebPlaylistApp() {
             status = "Loading series"
             runCatching { repository.loadSeries(url) }
                 .onSuccess { loaded ->
+                    val resumeSeries = progressStore.lastSeriesUrl() == loaded.url
                     series = loaded
-                    selectedEpisode = if (progressStore.lastSeriesUrl() == loaded.url) {
+                    selectedEpisode = if (resumeSeries) {
                         progressStore.lastEpisodeIndex().coerceIn(0, loaded.episodes.lastIndex.coerceAtLeast(0))
                     } else {
                         0
@@ -135,6 +142,10 @@ private fun WebPlaylistApp() {
                     status = "${loaded.episodes.size} episodes"
                     resolvedEpisodeUrl = null
                     showPlaylist = true
+                    if (loaded.episodes.isNotEmpty()) {
+                        val resumePosition = if (resumeSeries) progressStore.lastPositionMs() else 0L
+                        pendingAutoPlay = selectedEpisode to resumePosition
+                    }
                 }
                 .onFailure {
                     error = it.message ?: "Series load failed"
@@ -194,7 +205,25 @@ private fun WebPlaylistApp() {
             runCatching { repository.resolveEpisode(episode, currentSeries.url) }
                 .onSuccess { mediaUrl ->
                     resolvedEpisodeUrl = mediaUrl
-                    player.setMediaItem(MediaItem.fromUri(mediaUrl), resumePositionMs)
+                    val mediaItemBuilder = MediaItem.Builder().setUri(mediaUrl)
+                    if (mediaUrl.substringBefore("?").endsWith(".m3u8", ignoreCase = true)) {
+                        mediaItemBuilder.setMimeType(MimeTypes.APPLICATION_M3U8)
+                    }
+                    val mediaItem = mediaItemBuilder.build()
+                    val dataSourceFactory = DefaultHttpDataSource.Factory()
+                        .setUserAgent(USER_AGENT)
+                        .setDefaultRequestProperties(
+                            mapOf(
+                                "Referer" to episode.pageUrl,
+                                "Origin" to "https://v.myself-bbs.com",
+                            )
+                        )
+                    val mediaSource = if (mediaUrl.substringBefore("?").endsWith(".m3u8", ignoreCase = true)) {
+                        HlsMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
+                    } else {
+                        ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
+                    }
+                    player.setMediaSource(mediaSource, resumePositionMs)
                     player.prepare()
                     player.playWhenReady = true
                     status = episode.title
@@ -206,6 +235,12 @@ private fun WebPlaylistApp() {
                 }
             loading = false
         }
+    }
+
+    LaunchedEffect(pendingAutoPlay) {
+        val request = pendingAutoPlay ?: return@LaunchedEffect
+        pendingAutoPlay = null
+        playEpisode(request.first, request.second)
     }
 
     LaunchedEffect(Unit) {
@@ -242,6 +277,12 @@ private fun WebPlaylistApp() {
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(value: Boolean) {
                 isPlaying = value
+            }
+
+            override fun onPlayerError(playbackError: PlaybackException) {
+                error = "Player error: ${playbackError.errorCodeName}"
+                status = "Playback failed"
+                showPlaylist = true
             }
         }
         player.addListener(listener)
@@ -548,4 +589,5 @@ private fun FocusButton(
 }
 
 private const val DEFAULT_SERIES_URL = "https://myself-bbs.com/thread-44169-1-1.html"
+private const val USER_AGENT = "Mozilla/5.0"
 private val seriesUrlPattern = Regex("""https?://(?:www\.)?myself-bbs\.com/thread-\d+-\d+-\d+\.html""")
