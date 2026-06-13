@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -115,14 +116,15 @@ private fun WebPlaylistApp() {
     }
     val player = remember { ExoPlayer.Builder(context).build() }
 
-    var urlInput by remember { mutableStateOf(DEFAULT_SERIES_URL) }
+    val initialSeriesUrl = remember { progressStore.lastSeriesUrl() ?: DEFAULT_SERIES_URL }
+    var urlInput by remember { mutableStateOf(initialSeriesUrl) }
     var series by remember { mutableStateOf<LoadedSeries?>(null) }
-    var selectedEpisode by remember { mutableIntStateOf(progressStore.lastEpisodeIndex()) }
+    var selectedEpisode by remember { mutableIntStateOf(progressStore.lastEpisodeIndex(initialSeriesUrl)) }
     var status by remember { mutableStateOf("Loading sample series") }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(false) }
     var resolvedEpisodeUrl by remember { mutableStateOf<String?>(null) }
-    var lastSavedPosition by remember { mutableLongStateOf(progressStore.lastPositionMs()) }
+    var lastSavedPosition by remember { mutableLongStateOf(progressStore.lastPositionMs(initialSeriesUrl)) }
     var showPlaylist by remember { mutableStateOf(true) }
     var isPlaying by remember { mutableStateOf(false) }
     var loopCurrentEpisode by remember { mutableStateOf(false) }
@@ -134,8 +136,10 @@ private fun WebPlaylistApp() {
     var focusEpisodeWhenShown by remember { mutableStateOf(false) }
     var seekJob by remember { mutableStateOf<Job?>(null) }
     var leftRightPressHandledAsSeek by remember { mutableStateOf(false) }
-    var playbackPositionMs by remember { mutableLongStateOf(progressStore.lastPositionMs()) }
+    var playbackPositionMs by remember { mutableLongStateOf(progressStore.lastPositionMs(initialSeriesUrl)) }
     var playbackDurationMs by remember { mutableLongStateOf(0L) }
+    var focusedTransportIcon by remember { mutableStateOf<TransportIcon?>(null) }
+    var overlayActivityTick by remember { mutableIntStateOf(0) }
     val rootFocusRequester = remember { FocusRequester() }
     val playPauseFocusRequester = remember { FocusRequester() }
     val back10FocusRequester = remember { FocusRequester() }
@@ -150,20 +154,16 @@ private fun WebPlaylistApp() {
             status = "Loading series"
             runCatching { repository.loadSeries(url) }
                 .onSuccess { loaded ->
-                    val resumeSeries = progressStore.lastSeriesUrl() == loaded.url
                     series = loaded
-                    selectedEpisode = if (resumeSeries) {
-                        progressStore.lastEpisodeIndex().coerceIn(0, loaded.episodes.lastIndex.coerceAtLeast(0))
-                    } else {
-                        0
-                    }
+                    selectedEpisode = progressStore.lastEpisodeIndex(loaded.url)
+                        .coerceIn(0, loaded.episodes.lastIndex.coerceAtLeast(0))
                     progressStore.saveSeries(loaded.url)
                     urlInput = loaded.url
                     status = "${loaded.episodes.size} episodes"
                     resolvedEpisodeUrl = null
                     showPlaylist = true
                     if (loaded.episodes.isNotEmpty()) {
-                        val resumePosition = if (resumeSeries) progressStore.lastPositionMs() else 0L
+                        val resumePosition = progressStore.lastPositionMs(loaded.url)
                         pendingAutoPlay = selectedEpisode to resumePosition
                     }
                 }
@@ -200,7 +200,8 @@ private fun WebPlaylistApp() {
             loading = true
             error = null
             selectedEpisode = index
-            progressStore.saveProgress(index, resumePositionMs)
+            progressStore.saveProgress(currentSeries.url, index, resumePositionMs)
+            lastSavedPosition = resumePositionMs
             status = "Resolving ${episode.title}"
             runCatching { repository.resolveEpisode(episode, currentSeries.url) }
                 .onSuccess { mediaUrl ->
@@ -244,22 +245,22 @@ private fun WebPlaylistApp() {
     }
 
     LaunchedEffect(Unit) {
-        val savedUrl = progressStore.lastSeriesUrl() ?: DEFAULT_SERIES_URL
-        loadSeries(savedUrl)
+        loadSeries(initialSeriesUrl)
     }
 
     DisposableEffect(player, series, selectedEpisode, loopCurrentEpisode) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_ENDED) {
+                    val currentSeries = series ?: return
                     if (loopCurrentEpisode) {
-                        progressStore.saveProgress(selectedEpisode, 0L)
+                        progressStore.saveProgress(currentSeries.url, selectedEpisode, 0L)
                         player.seekTo(0L)
                         player.play()
                     } else {
                         val next = selectedEpisode + 1
-                        if (next <= (series?.episodes?.lastIndex ?: -1)) {
-                            progressStore.saveProgress(next, 0L)
+                        if (next <= currentSeries.episodes.lastIndex) {
+                            progressStore.saveProgress(currentSeries.url, next, 0L)
                             playEpisode(next)
                         }
                     }
@@ -268,14 +269,18 @@ private fun WebPlaylistApp() {
         }
         player.addListener(listener)
         onDispose {
-            progressStore.saveProgress(selectedEpisode, player.currentPosition.coerceAtLeast(0L))
+            series?.url?.let {
+                progressStore.saveProgress(it, selectedEpisode, player.currentPosition.coerceAtLeast(0L))
+            }
             player.removeListener(listener)
         }
     }
 
     fun saveCurrentProgress() {
         series?.url?.let { progressStore.saveSeries(it) }
-        progressStore.saveProgress(selectedEpisode, player.currentPosition.coerceAtLeast(0L))
+        series?.url?.let {
+            progressStore.saveProgress(it, selectedEpisode, player.currentPosition.coerceAtLeast(0L))
+        }
     }
 
     DisposableEffect(lifecycleOwner, series?.url, selectedEpisode) {
@@ -317,9 +322,9 @@ private fun WebPlaylistApp() {
             val position = player.currentPosition.coerceAtLeast(0L)
             playbackPositionMs = position
             playbackDurationMs = player.duration.takeIf { it > 0L } ?: 0L
-            if (position != lastSavedPosition) {
+            if (position >= lastSavedPosition + PROGRESS_SAVE_INTERVAL_MS) {
                 lastSavedPosition = position
-                progressStore.saveProgress(selectedEpisode, position)
+                series?.url?.let { progressStore.saveProgress(it, selectedEpisode, position) }
             }
         }
     }
@@ -327,6 +332,7 @@ private fun WebPlaylistApp() {
     fun showControlsAndPause() {
         if (resolvedEpisodeUrl != null) player.pause()
         focusPlayWhenShown = true
+        overlayActivityTick++
         showPlaylist = true
     }
 
@@ -338,7 +344,19 @@ private fun WebPlaylistApp() {
             OverlayFocusTarget.Forward10 -> focusForward10WhenShown = true
             OverlayFocusTarget.Episode -> focusEpisodeWhenShown = true
         }
+        overlayActivityTick++
         showPlaylist = true
+    }
+
+    fun hideControls() {
+        seekJob?.cancel()
+        seekJob = null
+        leftRightPressHandledAsSeek = false
+        showPlaylist = false
+    }
+
+    fun focusTargetForHorizontalKey(key: Key): OverlayFocusTarget {
+        return if (key == Key.DirectionLeft) OverlayFocusTarget.Back10 else OverlayFocusTarget.Forward10
     }
 
     LaunchedEffect(
@@ -369,8 +387,15 @@ private fun WebPlaylistApp() {
         }
     }
 
+    LaunchedEffect(showPlaylist, overlayActivityTick, resolvedEpisodeUrl) {
+        if (showPlaylist && resolvedEpisodeUrl != null) {
+            delay(OVERLAY_AUTO_HIDE_MS)
+            hideControls()
+        }
+    }
+
     BackHandler(enabled = showPlaylist && resolvedEpisodeUrl != null) {
-        showPlaylist = false
+        hideControls()
     }
 
     fun playPrevious() {
@@ -390,8 +415,30 @@ private fun WebPlaylistApp() {
         player.seekTo(target)
         playbackPositionMs = target
         playbackDurationMs = player.duration.takeIf { it > 0L } ?: playbackDurationMs
-        progressStore.saveProgress(selectedEpisode, target)
+        series?.url?.let { progressStore.saveProgress(it, selectedEpisode, target) }
         lastSavedPosition = target
+    }
+
+    fun startLongSeek(deltaMs: Long) {
+        if (resolvedEpisodeUrl == null || seekJob != null) return
+        leftRightPressHandledAsSeek = false
+        seekJob = scope.launch {
+            delay(LONG_PRESS_START_MS)
+            while (isActive) {
+                seekBy(deltaMs)
+                leftRightPressHandledAsSeek = true
+                overlayActivityTick++
+                delay(LONG_PRESS_SEEK_REPEAT_MS)
+            }
+        }
+    }
+
+    fun stopLongSeek(): Boolean {
+        val wasSeek = leftRightPressHandledAsSeek
+        seekJob?.cancel()
+        seekJob = null
+        leftRightPressHandledAsSeek = false
+        return wasSeek
     }
 
     Surface(
@@ -400,39 +447,45 @@ private fun WebPlaylistApp() {
             .focusRequester(rootFocusRequester)
             .focusable()
             .onPreviewKeyEvent { event ->
+                if (showPlaylist && event.type == KeyEventType.KeyUp) {
+                    overlayActivityTick++
+                }
+                val isHorizontalSeekKey = event.key == Key.DirectionLeft || event.key == Key.DirectionRight
+                if (!showPlaylist && isHorizontalSeekKey) {
+                    val delta = if (event.key == Key.DirectionLeft) -LONG_PRESS_SEEK_STEP_MS else LONG_PRESS_SEEK_STEP_MS
+                    when (event.type) {
+                        KeyEventType.KeyDown -> {
+                            showControlsWithoutPause(focusTargetForHorizontalKey(event.key))
+                            startLongSeek(delta)
+                            return@onPreviewKeyEvent true
+                        }
+                        KeyEventType.KeyUp -> {
+                            stopLongSeek()
+                            overlayActivityTick++
+                            return@onPreviewKeyEvent true
+                        }
+                        else -> return@onPreviewKeyEvent false
+                    }
+                }
+
                 if (
-                    !showPlaylist &&
-                    (event.key == Key.DirectionLeft || event.key == Key.DirectionRight)
+                    showPlaylist &&
+                    isHorizontalSeekKey &&
+                    (
+                        (event.key == Key.DirectionLeft && focusedTransportIcon == TransportIcon.Back10) ||
+                            (event.key == Key.DirectionRight && focusedTransportIcon == TransportIcon.Forward10)
+                        )
                 ) {
                     val delta = if (event.key == Key.DirectionLeft) -LONG_PRESS_SEEK_STEP_MS else LONG_PRESS_SEEK_STEP_MS
                     when (event.type) {
                         KeyEventType.KeyDown -> {
-                            if (seekJob == null) {
-                                leftRightPressHandledAsSeek = false
-                                seekJob = scope.launch {
-                                    delay(LONG_PRESS_START_MS)
-                                    while (isActive) {
-                                        seekBy(delta)
-                                        leftRightPressHandledAsSeek = true
-                                        delay(LONG_PRESS_SEEK_REPEAT_MS)
-                                    }
-                                }
-                            }
+                            startLongSeek(delta)
+                            overlayActivityTick++
                             return@onPreviewKeyEvent true
                         }
                         KeyEventType.KeyUp -> {
-                            val wasSeek = leftRightPressHandledAsSeek
-                            seekJob?.cancel()
-                            seekJob = null
-                            leftRightPressHandledAsSeek = false
-                            if (!wasSeek) {
-                                val focusTarget = if (event.key == Key.DirectionLeft) {
-                                    OverlayFocusTarget.Back10
-                                } else {
-                                    OverlayFocusTarget.Forward10
-                                }
-                                showControlsWithoutPause(focusTarget)
-                            }
+                            stopLongSeek()
+                            overlayActivityTick++
                             return@onPreviewKeyEvent true
                         }
                         else -> return@onPreviewKeyEvent false
@@ -507,6 +560,15 @@ private fun WebPlaylistApp() {
                         .clip(RoundedCornerShape(8.dp))
                         .background(Color(0xAA101418))
                         .border(1.dp, Color(0x663A4654), RoundedCornerShape(8.dp))
+                        .onPreviewKeyEvent { event ->
+                            if (event.type == KeyEventType.KeyUp && event.key == Key.DirectionDown) {
+                                playPauseFocusRequester.requestFocus()
+                                overlayActivityTick++
+                                true
+                            } else {
+                                false
+                            }
+                        }
                         .padding(12.dp),
                 ) {
                     Row(
@@ -568,7 +630,7 @@ private fun WebPlaylistApp() {
                     }
                 }
 
-                Column(
+                Row(
                     modifier = Modifier
                         .align(Alignment.Center)
                         .onPreviewKeyEvent { event ->
@@ -585,63 +647,89 @@ private fun WebPlaylistApp() {
                                 else -> false
                             }
                         },
-                    horizontalAlignment = Alignment.CenterHorizontally,
+                    horizontalArrangement = Arrangement.spacedBy(24.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(24.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        TransportButton(
-                            icon = TransportIcon.Previous,
-                            enabled = selectedEpisode > 0,
-                            onClick = { playPrevious() },
-                        )
-                        TransportButton(
-                            icon = TransportIcon.Back10,
-                            enabled = resolvedEpisodeUrl != null,
-                            modifier = Modifier.focusRequester(back10FocusRequester),
-                            onClick = { seekBy(-SEEK_STEP_MS) },
-                        )
-                        TransportButton(
-                            icon = if (isPlaying) TransportIcon.Pause else TransportIcon.Play,
-                            enabled = resolvedEpisodeUrl != null,
-                            modifier = Modifier.focusRequester(playPauseFocusRequester),
-                            onClick = {
-                                if (player.isPlaying) {
-                                    player.pause()
-                                } else {
-                                    player.play()
-                                }
-                            },
-                        )
-                        TransportButton(
-                            icon = TransportIcon.Forward10,
-                            enabled = resolvedEpisodeUrl != null,
-                            modifier = Modifier.focusRequester(forward10FocusRequester),
-                            onClick = { seekBy(SEEK_STEP_MS) },
-                        )
-                        TransportButton(
-                            icon = TransportIcon.Next,
-                            enabled = selectedEpisode < (series?.episodes?.lastIndex ?: 0),
-                            onClick = { playNext() },
-                        )
-                    }
-                    Spacer(Modifier.height(18.dp))
-                    PlaybackProgressPanel(
-                        positionMs = playbackPositionMs,
-                        durationMs = playbackDurationMs,
+                    TransportButton(
+                        icon = TransportIcon.Previous,
+                        enabled = selectedEpisode > 0,
+                        onFocused = { focusedTransportIcon = TransportIcon.Previous },
+                        onClick = {
+                            overlayActivityTick++
+                            playPrevious()
+                        },
+                    )
+                    TransportButton(
+                        icon = TransportIcon.Back10,
+                        enabled = resolvedEpisodeUrl != null,
+                        modifier = Modifier.focusRequester(back10FocusRequester),
+                        onFocused = { focusedTransportIcon = TransportIcon.Back10 },
+                        onClick = {
+                            overlayActivityTick++
+                            seekBy(-SEEK_STEP_MS)
+                        },
+                    )
+                    TransportButton(
+                        icon = if (isPlaying) TransportIcon.Pause else TransportIcon.Play,
+                        enabled = resolvedEpisodeUrl != null,
+                        modifier = Modifier.focusRequester(playPauseFocusRequester),
+                        onFocused = { focusedTransportIcon = if (isPlaying) TransportIcon.Pause else TransportIcon.Play },
+                        onClick = {
+                            overlayActivityTick++
+                            if (player.isPlaying) {
+                                player.pause()
+                            } else {
+                                player.play()
+                            }
+                        },
+                    )
+                    TransportButton(
+                        icon = TransportIcon.Forward10,
+                        enabled = resolvedEpisodeUrl != null,
+                        modifier = Modifier.focusRequester(forward10FocusRequester),
+                        onFocused = { focusedTransportIcon = TransportIcon.Forward10 },
+                        onClick = {
+                            overlayActivityTick++
+                            seekBy(SEEK_STEP_MS)
+                        },
+                    )
+                    TransportButton(
+                        icon = TransportIcon.Next,
+                        enabled = selectedEpisode < (series?.episodes?.lastIndex ?: 0),
+                        onFocused = { focusedTransportIcon = TransportIcon.Next },
+                        onClick = {
+                            overlayActivityTick++
+                            playNext()
+                        },
                     )
                 }
+
+                PlaybackProgressPanel(
+                    positionMs = playbackPositionMs,
+                    durationMs = playbackDurationMs,
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .offset(y = 104.dp),
+                )
 
                 Column(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
-                        .padding(horizontal = 24.dp, vertical = 18.dp)
+                        .padding(horizontal = 24.dp, vertical = 12.dp)
                         .clip(RoundedCornerShape(8.dp))
                         .background(Color(0xAA101418))
                         .border(1.dp, Color(0x663A4654), RoundedCornerShape(8.dp))
-                        .padding(12.dp),
+                        .onPreviewKeyEvent { event ->
+                            if (event.type == KeyEventType.KeyUp && event.key == Key.DirectionUp) {
+                                playPauseFocusRequester.requestFocus()
+                                overlayActivityTick++
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                        .padding(10.dp),
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -670,7 +758,7 @@ private fun WebPlaylistApp() {
                             Text(if (loopCurrentEpisode) "Loop" else "Next")
                         }
                     }
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(4.dp))
                     Text(
                         text = if (series?.episodes.isNullOrEmpty()) "No episodes loaded" else "",
                         color = Color(0xFFB8C3CC),
@@ -681,8 +769,12 @@ private fun WebPlaylistApp() {
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
                             itemsIndexed(series?.episodes.orEmpty()) { index, episode ->
-                                val resume = if (index == progressStore.lastEpisodeIndex()) {
-                                    progressStore.lastPositionMs()
+                                val currentSeriesUrl = series?.url
+                                val resume = if (
+                                    currentSeriesUrl != null &&
+                                    index == progressStore.lastEpisodeIndex(currentSeriesUrl)
+                                ) {
+                                    progressStore.lastPositionMs(currentSeriesUrl)
                                 } else {
                                     0L
                                 }
@@ -713,6 +805,7 @@ private fun TransportButton(
     enabled: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    onFocused: () -> Unit = {},
 ) {
     var focused by remember { mutableStateOf(false) }
     Button(
@@ -720,7 +813,10 @@ private fun TransportButton(
         enabled = enabled,
         modifier = modifier
             .size(78.dp)
-            .onFocusChanged { focused = it.isFocused }
+            .onFocusChanged {
+                focused = it.isFocused
+                if (it.isFocused) onFocused()
+            }
             .border(
                 width = if (focused) 3.dp else 1.dp,
                 color = if (focused) Color.White else Color(0x88FFFFFF),
@@ -760,6 +856,7 @@ private enum class OverlayFocusTarget {
 private fun PlaybackProgressPanel(
     positionMs: Long,
     durationMs: Long,
+    modifier: Modifier = Modifier,
 ) {
     val progress = if (durationMs > 0L) {
         (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
@@ -768,7 +865,7 @@ private fun PlaybackProgressPanel(
     }
 
     Column(
-        modifier = Modifier
+        modifier = modifier
             .width(620.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(Color(0xAA101418))
@@ -908,6 +1005,8 @@ private const val SEEK_STEP_MS = 10_000L
 private const val LONG_PRESS_SEEK_STEP_MS = 30_000L
 private const val LONG_PRESS_START_MS = 500L
 private const val LONG_PRESS_SEEK_REPEAT_MS = 700L
+private const val OVERLAY_AUTO_HIDE_MS = 10_000L
+private const val PROGRESS_SAVE_INTERVAL_MS = 5_000L
 private val seriesUrlPattern = Regex("""https?://(?:www\.)?myself-bbs\.com/thread-\d+-\d+-\d+\.html""")
 
 private fun formatPlaybackTime(ms: Long): String {
