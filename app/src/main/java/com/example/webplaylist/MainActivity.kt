@@ -161,6 +161,7 @@ private fun WebPlaylistApp() {
     var playbackDurationMs by remember { mutableLongStateOf(0L) }
     var focusedTransportIcon by remember { mutableStateOf<TransportIcon?>(null) }
     var urlInputFocused by remember { mutableStateOf(false) }
+    var seriesListFocused by remember { mutableStateOf(false) }
     var playlistFocused by remember { mutableStateOf(false) }
     var seriesActionTarget by remember { mutableStateOf<SavedSeries?>(null) }
     var overlayActivityTick by remember { mutableIntStateOf(0) }
@@ -343,9 +344,9 @@ private fun WebPlaylistApp() {
         onDispose { player.release() }
     }
 
-    DisposableEffect(showPlaylist, resolvedEpisodeUrl) {
+    DisposableEffect(isPlaying, resolvedEpisodeUrl) {
         val activity = context as? Activity
-        if (!showPlaylist && resolvedEpisodeUrl != null) {
+        if (resolvedEpisodeUrl != null && isPlaying) {
             activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         } else {
             activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -443,8 +444,8 @@ private fun WebPlaylistApp() {
         }
     }
 
-    LaunchedEffect(showPlaylist, overlayActivityTick, resolvedEpisodeUrl) {
-        if (showPlaylist && resolvedEpisodeUrl != null) {
+    LaunchedEffect(showPlaylist, overlayActivityTick, resolvedEpisodeUrl, urlInputFocused, isPlaying) {
+        if (showPlaylist && resolvedEpisodeUrl != null && isPlaying && !urlInputFocused) {
             delay(OVERLAY_AUTO_HIDE_MS)
             hideControls()
         }
@@ -533,6 +534,7 @@ private fun WebPlaylistApp() {
                     showPlaylist &&
                     isHorizontalSeekKey &&
                     !urlInputFocused &&
+                    !seriesListFocused &&
                     !playlistFocused
                 ) {
                     val delta = if (event.key == Key.DirectionLeft) -LONG_PRESS_SEEK_STEP_MS else LONG_PRESS_SEEK_STEP_MS
@@ -637,17 +639,20 @@ private fun WebPlaylistApp() {
                                 .focusRequester(urlFocusRequester)
                                 .onFocusChanged {
                                     urlInputFocused = it.isFocused
-                                    if (it.isFocused) playlistFocused = false
+                                    if (it.isFocused) {
+                                        seriesListFocused = false
+                                        playlistFocused = false
+                                    }
                                 }
                                 .onPreviewKeyEvent { event ->
                                     if (event.key != Key.DirectionDown) return@onPreviewKeyEvent false
                                     when (event.type) {
-                                        KeyEventType.KeyDown -> true
-                                        KeyEventType.KeyUp -> {
+                                        KeyEventType.KeyDown -> {
                                             focusSeriesWhenShown = true
                                             overlayActivityTick++
                                             true
                                         }
+                                        KeyEventType.KeyUp -> true
                                         else -> false
                                     }
                                 },
@@ -687,23 +692,23 @@ private fun WebPlaylistApp() {
                                     when (event.key) {
                                         Key.DirectionUp -> {
                                             when (event.type) {
-                                                KeyEventType.KeyDown -> true
-                                                KeyEventType.KeyUp -> {
+                                                KeyEventType.KeyDown -> {
                                                     urlFocusRequester.requestFocus()
                                                     overlayActivityTick++
                                                     true
                                                 }
+                                                KeyEventType.KeyUp -> true
                                                 else -> false
                                             }
                                         }
                                         Key.DirectionDown -> {
                                             when (event.type) {
-                                                KeyEventType.KeyDown -> true
-                                                KeyEventType.KeyUp -> {
+                                                KeyEventType.KeyDown -> {
                                                     playPauseFocusRequester.requestFocus()
                                                     overlayActivityTick++
                                                     true
                                                 }
+                                                KeyEventType.KeyUp -> true
                                                 else -> false
                                             }
                                         }
@@ -726,6 +731,7 @@ private fun WebPlaylistApp() {
                                         Modifier.width(290.dp)
                                     },
                                     onFocused = {
+                                        seriesListFocused = true
                                         playlistFocused = false
                                     },
                                     onLongPress = {
@@ -752,15 +758,28 @@ private fun WebPlaylistApp() {
                     modifier = Modifier
                         .align(Alignment.Center)
                         .onPreviewKeyEvent { event ->
-                            if (event.type != KeyEventType.KeyUp) return@onPreviewKeyEvent false
                             when (event.key) {
                                 Key.DirectionUp -> {
-                                    urlFocusRequester.requestFocus()
-                                    true
+                                    when (event.type) {
+                                        KeyEventType.KeyDown -> {
+                                            focusSeriesWhenShown = true
+                                            overlayActivityTick++
+                                            true
+                                        }
+                                        KeyEventType.KeyUp -> true
+                                        else -> false
+                                    }
                                 }
                                 Key.DirectionDown -> {
-                                    focusEpisodeWhenShown = true
-                                    true
+                                    when (event.type) {
+                                        KeyEventType.KeyDown -> {
+                                            focusEpisodeWhenShown = true
+                                            overlayActivityTick++
+                                            true
+                                        }
+                                        KeyEventType.KeyUp -> true
+                                        else -> false
+                                    }
                                 }
                                 else -> false
                             }
@@ -774,6 +793,7 @@ private fun WebPlaylistApp() {
                         modifier = Modifier.focusRequester(previousEpisodeFocusRequester),
                         onFocused = {
                             playlistFocused = false
+                            seriesListFocused = false
                             focusedTransportIcon = TransportIcon.Previous
                         },
                         onClick = {
@@ -787,6 +807,7 @@ private fun WebPlaylistApp() {
                         modifier = Modifier.focusRequester(back10FocusRequester),
                         onFocused = {
                             playlistFocused = false
+                            seriesListFocused = false
                             focusedTransportIcon = TransportIcon.Back10
                         },
                         onClick = {
@@ -800,6 +821,7 @@ private fun WebPlaylistApp() {
                         modifier = Modifier.focusRequester(playPauseFocusRequester),
                         onFocused = {
                             playlistFocused = false
+                            seriesListFocused = false
                             focusedTransportIcon = if (isPlaying) TransportIcon.Pause else TransportIcon.Play
                         },
                         onClick = {
@@ -817,6 +839,7 @@ private fun WebPlaylistApp() {
                         modifier = Modifier.focusRequester(forward10FocusRequester),
                         onFocused = {
                             playlistFocused = false
+                            seriesListFocused = false
                             focusedTransportIcon = TransportIcon.Forward10
                         },
                         onClick = {
@@ -830,6 +853,7 @@ private fun WebPlaylistApp() {
                         modifier = Modifier.focusRequester(nextEpisodeFocusRequester),
                         onFocused = {
                             playlistFocused = false
+                            seriesListFocused = false
                             focusedTransportIcon = TransportIcon.Next
                         },
                         onClick = {
@@ -847,18 +871,6 @@ private fun WebPlaylistApp() {
                         .clip(RoundedCornerShape(8.dp))
                         .background(PANEL_BACKGROUND)
                         .border(1.dp, PANEL_BORDER, RoundedCornerShape(8.dp))
-                        .onPreviewKeyEvent { event ->
-                            if (event.key != Key.DirectionUp) return@onPreviewKeyEvent false
-                            when (event.type) {
-                                KeyEventType.KeyDown -> true
-                                KeyEventType.KeyUp -> {
-                                    playPauseFocusRequester.requestFocus()
-                                    overlayActivityTick++
-                                    true
-                                }
-                                else -> false
-                            }
-                        }
                         .padding(10.dp),
                 ) {
                     PlaybackProgressPanel(
@@ -884,6 +896,18 @@ private fun WebPlaylistApp() {
                         Button(
                             onClick = { loopCurrentEpisode = !loopCurrentEpisode },
                             enabled = resolvedEpisodeUrl != null,
+                            modifier = Modifier.onPreviewKeyEvent { event ->
+                                if (event.key != Key.DirectionDown) return@onPreviewKeyEvent false
+                                when (event.type) {
+                                    KeyEventType.KeyDown -> {
+                                        focusEpisodeWhenShown = true
+                                        overlayActivityTick++
+                                        true
+                                    }
+                                    KeyEventType.KeyUp -> true
+                                    else -> false
+                                }
+                            },
                             colors = translucentButtonColors(),
                         ) {
                             Text(if (loopCurrentEpisode) "Play loop" else "Play next")
@@ -920,7 +944,10 @@ private fun WebPlaylistApp() {
                                     } else {
                                         Modifier.width(220.dp)
                                     },
-                                    onFocused = { playlistFocused = true },
+                                    onFocused = {
+                                        seriesListFocused = false
+                                        playlistFocused = true
+                                    },
                                     onClick = { playEpisode(index, resume) },
                                 )
                             }
