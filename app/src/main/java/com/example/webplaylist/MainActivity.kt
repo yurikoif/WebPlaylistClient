@@ -148,9 +148,11 @@ private fun WebPlaylistApp() {
     var focusedTransportIcon by remember { mutableStateOf<TransportIcon?>(null) }
     var overlayActivityTick by remember { mutableIntStateOf(0) }
     val rootFocusRequester = remember { FocusRequester() }
+    val previousEpisodeFocusRequester = remember { FocusRequester() }
     val playPauseFocusRequester = remember { FocusRequester() }
     val back10FocusRequester = remember { FocusRequester() }
     val forward10FocusRequester = remember { FocusRequester() }
+    val nextEpisodeFocusRequester = remember { FocusRequester() }
     val currentEpisodeFocusRequester = remember { FocusRequester() }
     val urlFocusRequester = remember { FocusRequester() }
 
@@ -484,7 +486,17 @@ private fun WebPlaylistApp() {
                             return@onPreviewKeyEvent true
                         }
                         KeyEventType.KeyUp -> {
-                            stopLongSeek()
+                            val wasSeek = stopLongSeek()
+                            if (!wasSeek) {
+                                if (event.key == Key.DirectionLeft && selectedEpisode > 0) {
+                                    previousEpisodeFocusRequester.requestFocus()
+                                } else if (
+                                    event.key == Key.DirectionRight &&
+                                    selectedEpisode < (series?.episodes?.lastIndex ?: 0)
+                                ) {
+                                    nextEpisodeFocusRequester.requestFocus()
+                                }
+                            }
                             overlayActivityTick++
                             return@onPreviewKeyEvent true
                         }
@@ -674,12 +686,13 @@ private fun WebPlaylistApp() {
                                 else -> false
                             }
                         },
-                    horizontalArrangement = Arrangement.spacedBy(24.dp),
+                    horizontalArrangement = Arrangement.spacedBy(42.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     TransportButton(
                         icon = TransportIcon.Previous,
                         enabled = selectedEpisode > 0,
+                        modifier = Modifier.focusRequester(previousEpisodeFocusRequester),
                         onFocused = { focusedTransportIcon = TransportIcon.Previous },
                         onClick = {
                             overlayActivityTick++
@@ -723,6 +736,7 @@ private fun WebPlaylistApp() {
                     TransportButton(
                         icon = TransportIcon.Next,
                         enabled = selectedEpisode < (series?.episodes?.lastIndex ?: 0),
+                        modifier = Modifier.focusRequester(nextEpisodeFocusRequester),
                         onFocused = { focusedTransportIcon = TransportIcon.Next },
                         onClick = {
                             overlayActivityTick++
@@ -730,14 +744,6 @@ private fun WebPlaylistApp() {
                         },
                     )
                 }
-
-                PlaybackProgressPanel(
-                    positionMs = playbackPositionMs,
-                    durationMs = playbackDurationMs,
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .offset(y = 104.dp),
-                )
 
                 Column(
                     modifier = Modifier
@@ -761,6 +767,12 @@ private fun WebPlaylistApp() {
                         }
                         .padding(10.dp),
                 ) {
+                    PlaybackProgressPanel(
+                        positionMs = playbackPositionMs,
+                        durationMs = playbackDurationMs,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(8.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -774,18 +786,13 @@ private fun WebPlaylistApp() {
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
-                            Text(
-                                text = if (loopCurrentEpisode) "Mode: loop current episode" else "Mode: next episode",
-                                color = Color(0xFFB8C3CC),
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
                         }
                         Button(
                             onClick = { loopCurrentEpisode = !loopCurrentEpisode },
                             enabled = resolvedEpisodeUrl != null,
                             colors = translucentButtonColors(),
                         ) {
-                            Text(if (loopCurrentEpisode) "Loop" else "Next")
+                            Text(if (loopCurrentEpisode) "Play loop" else "Play next")
                         }
                     }
                     Spacer(Modifier.height(4.dp))
@@ -896,11 +903,6 @@ private fun PlaybackProgressPanel(
 
     Column(
         modifier = modifier
-            .width(620.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(Color(0xAA101418))
-            .border(1.dp, Color(0x663A4654), RoundedCornerShape(8.dp))
-            .padding(horizontal = 14.dp, vertical = 10.dp),
     ) {
         Box(
             modifier = Modifier
