@@ -394,12 +394,12 @@ private fun WebPlaylistApp() {
                 Column(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
-                        .padding(top = 24.dp)
+                        .padding(top = 18.dp)
                         .width(860.dp)
                         .clip(RoundedCornerShape(8.dp))
                         .background(Color(0xAA101418))
                         .border(1.dp, Color(0x663A4654), RoundedCornerShape(8.dp))
-                        .padding(16.dp),
+                        .padding(12.dp),
                 ) {
                     Row(
                         modifier = Modifier
@@ -429,7 +429,7 @@ private fun WebPlaylistApp() {
                             }
                         }
                     }
-                    Spacer(Modifier.height(10.dp))
+                    Spacer(Modifier.height(6.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         OutlinedTextField(
                             value = urlInput,
@@ -449,7 +449,7 @@ private fun WebPlaylistApp() {
                             Text("Open")
                         }
                     }
-                    Spacer(Modifier.height(10.dp))
+                    Spacer(Modifier.height(6.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         OutlinedTextField(
                             value = query,
@@ -468,17 +468,17 @@ private fun WebPlaylistApp() {
                         }
                     }
                     if (loading) {
-                        Spacer(Modifier.height(10.dp))
-                        CircularProgressIndicator(color = Color(0xFF78D5C6))
+                        Spacer(Modifier.height(6.dp))
+                        CircularProgressIndicator(color = Color.White)
                     }
                     error?.let {
-                        Spacer(Modifier.height(10.dp))
+                        Spacer(Modifier.height(6.dp))
                         Text(text = it, color = Color(0xFFFFB199))
                     }
                     if (results.isNotEmpty()) {
-                        Spacer(Modifier.height(10.dp))
+                        Spacer(Modifier.height(6.dp))
                         Text("Series Results", color = Color.White, style = MaterialTheme.typography.titleMedium)
-                        Spacer(Modifier.height(8.dp))
+                        Spacer(Modifier.height(6.dp))
                         LazyRow(
                             modifier = Modifier
                                 .fillMaxWidth(),
@@ -513,7 +513,7 @@ private fun WebPlaylistApp() {
                                 else -> false
                             }
                         },
-                    horizontalArrangement = Arrangement.spacedBy(36.dp),
+                    horizontalArrangement = Arrangement.spacedBy(24.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     TransportButton(
@@ -544,11 +544,11 @@ private fun WebPlaylistApp() {
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
-                        .padding(horizontal = 24.dp, vertical = 22.dp)
+                        .padding(horizontal = 24.dp, vertical = 18.dp)
                         .clip(RoundedCornerShape(8.dp))
                         .background(Color(0xAA101418))
                         .border(1.dp, Color(0x663A4654), RoundedCornerShape(8.dp))
-                        .padding(16.dp),
+                        .padding(12.dp),
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -577,7 +577,7 @@ private fun WebPlaylistApp() {
                             Text(if (loopCurrentEpisode) "Loop" else "Next")
                         }
                     }
-                    Spacer(Modifier.height(10.dp))
+                    Spacer(Modifier.height(6.dp))
                     Text(
                         text = if (series?.episodes.isNullOrEmpty()) "No episodes loaded" else "",
                         color = Color(0xFFB8C3CC),
@@ -598,10 +598,10 @@ private fun WebPlaylistApp() {
                                     selected = index == selectedEpisode,
                                     modifier = if (index == selectedEpisode) {
                                         Modifier
-                                            .width(240.dp)
+                                            .width(220.dp)
                                             .focusRequester(currentEpisodeFocusRequester)
                                     } else {
-                                        Modifier.width(240.dp)
+                                        Modifier.width(220.dp)
                                     },
                                     onClick = { playEpisode(index, resume) },
                                 )
@@ -609,18 +609,6 @@ private fun WebPlaylistApp() {
                         }
                     }
                 }
-            } else {
-                Text(
-                    text = "OK / Up",
-                    color = Color(0x99FFFFFF),
-                    style = MaterialTheme.typography.labelLarge,
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(18.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(Color(0x66000000))
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                )
             }
         }
     }
@@ -638,24 +626,24 @@ private fun TransportButton(
         onClick = onClick,
         enabled = enabled,
         modifier = modifier
-            .size(92.dp)
+            .size(64.dp)
             .onFocusChanged { focused = it.isFocused }
             .border(
                 width = if (focused) 3.dp else 1.dp,
-                color = if (focused) Color(0xFF78D5C6) else Color(0x66FFFFFF),
+                color = if (focused) Color.White else Color(0x88FFFFFF),
                 shape = CircleShape,
             ),
         shape = CircleShape,
         colors = ButtonDefaults.buttonColors(
-            containerColor = if (focused) Color(0xCC2F4657) else Color(0x77111820),
+            containerColor = if (focused) Color(0x66FFFFFF) else Color(0x33FFFFFF),
             contentColor = Color.White,
-            disabledContainerColor = Color(0x44111820),
+            disabledContainerColor = Color(0x22FFFFFF),
             disabledContentColor = Color(0x66FFFFFF),
         ),
     ) {
         Text(
             text = label,
-            style = MaterialTheme.typography.headlineMedium,
+            style = MaterialTheme.typography.titleLarge,
         )
     }
 }
@@ -669,20 +657,20 @@ private fun EpisodeRailButton(
 ) {
     var focused by remember { mutableStateOf(false) }
     val borderColor = when {
-        focused -> Color(0xFF78D5C6)
-        selected -> Color(0xFFE3BC5B)
+        focused -> Color.White
+        selected -> Color(0xBBFFFFFF)
         else -> Color.Transparent
     }
 
     Button(
         onClick = onClick,
         modifier = modifier
-            .height(58.dp)
+            .height(50.dp)
             .onFocusChanged { focused = it.isFocused }
             .border(2.dp, borderColor, RoundedCornerShape(6.dp)),
         shape = RoundedCornerShape(6.dp),
         colors = ButtonDefaults.buttonColors(
-            containerColor = if (selected) Color(0xCC29384A) else Color(0x991C232B),
+            containerColor = if (selected) Color(0x55FFFFFF) else Color(0x33FFFFFF),
             contentColor = Color.White,
         ),
     ) {
@@ -697,9 +685,9 @@ private fun EpisodeRailButton(
 
 @Composable
 private fun translucentButtonColors() = ButtonDefaults.buttonColors(
-    containerColor = Color(0x991C2833),
+    containerColor = Color(0x33FFFFFF),
     contentColor = Color.White,
-    disabledContainerColor = Color(0x551C2833),
+    disabledContainerColor = Color(0x22FFFFFF),
     disabledContentColor = Color(0x77FFFFFF),
 )
 
