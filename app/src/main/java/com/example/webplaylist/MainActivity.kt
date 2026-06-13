@@ -137,8 +137,10 @@ private fun WebPlaylistApp() {
     var loopCurrentEpisode by remember { mutableStateOf(false) }
     var pendingAutoPlay by remember { mutableStateOf<Pair<Int, Long>?>(null) }
     var focusPlayWhenShown by remember { mutableStateOf(false) }
+    var focusPreviousWhenShown by remember { mutableStateOf(false) }
     var focusBack10WhenShown by remember { mutableStateOf(false) }
     var focusForward10WhenShown by remember { mutableStateOf(false) }
+    var focusNextWhenShown by remember { mutableStateOf(false) }
     var focusUrlWhenShown by remember { mutableStateOf(false) }
     var focusEpisodeWhenShown by remember { mutableStateOf(false) }
     var seekJob by remember { mutableStateOf<Job?>(null) }
@@ -146,6 +148,8 @@ private fun WebPlaylistApp() {
     var playbackPositionMs by remember { mutableLongStateOf(progressStore.lastPositionMs(initialSeriesUrl)) }
     var playbackDurationMs by remember { mutableLongStateOf(0L) }
     var focusedTransportIcon by remember { mutableStateOf<TransportIcon?>(null) }
+    var urlInputFocused by remember { mutableStateOf(false) }
+    var playlistFocused by remember { mutableStateOf(false) }
     var overlayActivityTick by remember { mutableIntStateOf(0) }
     val rootFocusRequester = remember { FocusRequester() }
     val previousEpisodeFocusRequester = remember { FocusRequester() }
@@ -383,13 +387,18 @@ private fun WebPlaylistApp() {
     LaunchedEffect(
         showPlaylist,
         focusPlayWhenShown,
+        focusPreviousWhenShown,
         focusBack10WhenShown,
         focusForward10WhenShown,
+        focusNextWhenShown,
         focusUrlWhenShown,
         focusEpisodeWhenShown,
     ) {
         if (!showPlaylist) {
             rootFocusRequester.requestFocus()
+        } else if (focusPreviousWhenShown) {
+            previousEpisodeFocusRequester.requestFocus()
+            focusPreviousWhenShown = false
         } else if (focusPlayWhenShown) {
             playPauseFocusRequester.requestFocus()
             focusPlayWhenShown = false
@@ -399,6 +408,9 @@ private fun WebPlaylistApp() {
         } else if (focusForward10WhenShown) {
             forward10FocusRequester.requestFocus()
             focusForward10WhenShown = false
+        } else if (focusNextWhenShown) {
+            nextEpisodeFocusRequester.requestFocus()
+            focusNextWhenShown = false
         } else if (focusUrlWhenShown) {
             urlFocusRequester.requestFocus()
             focusUrlWhenShown = false
@@ -486,17 +498,7 @@ private fun WebPlaylistApp() {
                             return@onPreviewKeyEvent true
                         }
                         KeyEventType.KeyUp -> {
-                            val wasSeek = stopLongSeek()
-                            if (!wasSeek) {
-                                if (event.key == Key.DirectionLeft && selectedEpisode > 0) {
-                                    previousEpisodeFocusRequester.requestFocus()
-                                } else if (
-                                    event.key == Key.DirectionRight &&
-                                    selectedEpisode < (series?.episodes?.lastIndex ?: 0)
-                                ) {
-                                    nextEpisodeFocusRequester.requestFocus()
-                                }
-                            }
+                            stopLongSeek()
                             overlayActivityTick++
                             return@onPreviewKeyEvent true
                         }
@@ -507,22 +509,23 @@ private fun WebPlaylistApp() {
                 if (
                     showPlaylist &&
                     isHorizontalSeekKey &&
-                    (
-                        (event.key == Key.DirectionLeft && focusedTransportIcon == TransportIcon.Back10) ||
-                            (event.key == Key.DirectionRight && focusedTransportIcon == TransportIcon.Forward10)
-                        )
+                    !urlInputFocused &&
+                    !playlistFocused
                 ) {
                     val delta = if (event.key == Key.DirectionLeft) -LONG_PRESS_SEEK_STEP_MS else LONG_PRESS_SEEK_STEP_MS
                     when (event.type) {
                         KeyEventType.KeyDown -> {
+                            if (seekJob != null) {
+                                return@onPreviewKeyEvent true
+                            }
                             startLongSeek(delta)
                             overlayActivityTick++
-                            return@onPreviewKeyEvent true
+                            return@onPreviewKeyEvent false
                         }
                         KeyEventType.KeyUp -> {
-                            stopLongSeek()
+                            val wasSeek = stopLongSeek()
                             overlayActivityTick++
-                            return@onPreviewKeyEvent true
+                            return@onPreviewKeyEvent wasSeek
                         }
                         else -> return@onPreviewKeyEvent false
                     }
@@ -594,8 +597,8 @@ private fun WebPlaylistApp() {
                         .padding(top = 18.dp)
                         .width(860.dp)
                         .clip(RoundedCornerShape(8.dp))
-                        .background(Color(0xAA101418))
-                        .border(1.dp, Color(0x663A4654), RoundedCornerShape(8.dp))
+                        .background(PANEL_BACKGROUND)
+                        .border(1.dp, PANEL_BORDER, RoundedCornerShape(8.dp))
                         .onPreviewKeyEvent { event ->
                             if (event.key != Key.DirectionDown) return@onPreviewKeyEvent false
                             when (event.type) {
@@ -645,7 +648,11 @@ private fun WebPlaylistApp() {
                             onValueChange = { urlInput = it },
                             modifier = Modifier
                                 .weight(1f)
-                                .focusRequester(urlFocusRequester),
+                                .focusRequester(urlFocusRequester)
+                                .onFocusChanged {
+                                    urlInputFocused = it.isFocused
+                                    if (it.isFocused) playlistFocused = false
+                                },
                             singleLine = true,
                             label = { Text("Series URL") },
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
@@ -693,7 +700,10 @@ private fun WebPlaylistApp() {
                         icon = TransportIcon.Previous,
                         enabled = selectedEpisode > 0,
                         modifier = Modifier.focusRequester(previousEpisodeFocusRequester),
-                        onFocused = { focusedTransportIcon = TransportIcon.Previous },
+                        onFocused = {
+                            playlistFocused = false
+                            focusedTransportIcon = TransportIcon.Previous
+                        },
                         onClick = {
                             overlayActivityTick++
                             playPrevious()
@@ -703,7 +713,10 @@ private fun WebPlaylistApp() {
                         icon = TransportIcon.Back10,
                         enabled = resolvedEpisodeUrl != null,
                         modifier = Modifier.focusRequester(back10FocusRequester),
-                        onFocused = { focusedTransportIcon = TransportIcon.Back10 },
+                        onFocused = {
+                            playlistFocused = false
+                            focusedTransportIcon = TransportIcon.Back10
+                        },
                         onClick = {
                             overlayActivityTick++
                             seekBy(-SEEK_STEP_MS)
@@ -713,7 +726,10 @@ private fun WebPlaylistApp() {
                         icon = if (isPlaying) TransportIcon.Pause else TransportIcon.Play,
                         enabled = resolvedEpisodeUrl != null,
                         modifier = Modifier.focusRequester(playPauseFocusRequester),
-                        onFocused = { focusedTransportIcon = if (isPlaying) TransportIcon.Pause else TransportIcon.Play },
+                        onFocused = {
+                            playlistFocused = false
+                            focusedTransportIcon = if (isPlaying) TransportIcon.Pause else TransportIcon.Play
+                        },
                         onClick = {
                             overlayActivityTick++
                             if (player.isPlaying) {
@@ -727,7 +743,10 @@ private fun WebPlaylistApp() {
                         icon = TransportIcon.Forward10,
                         enabled = resolvedEpisodeUrl != null,
                         modifier = Modifier.focusRequester(forward10FocusRequester),
-                        onFocused = { focusedTransportIcon = TransportIcon.Forward10 },
+                        onFocused = {
+                            playlistFocused = false
+                            focusedTransportIcon = TransportIcon.Forward10
+                        },
                         onClick = {
                             overlayActivityTick++
                             seekBy(SEEK_STEP_MS)
@@ -737,7 +756,10 @@ private fun WebPlaylistApp() {
                         icon = TransportIcon.Next,
                         enabled = selectedEpisode < (series?.episodes?.lastIndex ?: 0),
                         modifier = Modifier.focusRequester(nextEpisodeFocusRequester),
-                        onFocused = { focusedTransportIcon = TransportIcon.Next },
+                        onFocused = {
+                            playlistFocused = false
+                            focusedTransportIcon = TransportIcon.Next
+                        },
                         onClick = {
                             overlayActivityTick++
                             playNext()
@@ -751,8 +773,8 @@ private fun WebPlaylistApp() {
                         .fillMaxWidth()
                         .padding(horizontal = 24.dp, vertical = 12.dp)
                         .clip(RoundedCornerShape(8.dp))
-                        .background(Color(0xAA101418))
-                        .border(1.dp, Color(0x663A4654), RoundedCornerShape(8.dp))
+                        .background(PANEL_BACKGROUND)
+                        .border(1.dp, PANEL_BORDER, RoundedCornerShape(8.dp))
                         .onPreviewKeyEvent { event ->
                             if (event.key != Key.DirectionUp) return@onPreviewKeyEvent false
                             when (event.type) {
@@ -825,6 +847,7 @@ private fun WebPlaylistApp() {
                                     } else {
                                         Modifier.width(220.dp)
                                     },
+                                    onFocused = { playlistFocused = true },
                                     onClick = { playEpisode(index, resume) },
                                 )
                             }
@@ -993,12 +1016,13 @@ private fun EpisodeRailButton(
     text: String,
     selected: Boolean,
     modifier: Modifier = Modifier,
+    onFocused: () -> Unit = {},
     onClick: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
     val borderColor = when {
         focused -> Color.White
-        selected -> Color(0xBBFFFFFF)
+        selected -> CURRENT_EPISODE_BLUE
         else -> Color.Transparent
     }
 
@@ -1006,11 +1030,14 @@ private fun EpisodeRailButton(
         onClick = onClick,
         modifier = modifier
             .height(50.dp)
-            .onFocusChanged { focused = it.isFocused }
+            .onFocusChanged {
+                focused = it.isFocused
+                if (it.isFocused) onFocused()
+            }
             .border(2.dp, borderColor, RoundedCornerShape(6.dp)),
         shape = RoundedCornerShape(6.dp),
         colors = ButtonDefaults.buttonColors(
-            containerColor = if (selected) Color(0x55FFFFFF) else Color(0x33FFFFFF),
+            containerColor = if (selected) CURRENT_EPISODE_BLUE.copy(alpha = 0.36f) else Color(0x33FFFFFF),
             contentColor = Color.White,
         ),
     ) {
@@ -1039,6 +1066,9 @@ private const val LONG_PRESS_START_MS = 500L
 private const val LONG_PRESS_SEEK_REPEAT_MS = 700L
 private const val OVERLAY_AUTO_HIDE_MS = 10_000L
 private const val PROGRESS_SAVE_INTERVAL_MS = 5_000L
+private val PANEL_BACKGROUND = Color(0xC8242B33)
+private val PANEL_BORDER = Color(0x88D7E0EA)
+private val CURRENT_EPISODE_BLUE = Color(0xFF8FD7FF)
 private val seriesUrlPattern = Regex("""https?://(?:www\.)?myself-bbs\.com/thread-\d+-\d+-\d+\.html""")
 
 private fun formatPlaybackTime(ms: Long): String {
