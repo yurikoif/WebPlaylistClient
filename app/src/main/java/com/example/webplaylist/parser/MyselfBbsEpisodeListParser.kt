@@ -21,6 +21,7 @@ class MyselfBbsEpisodeListParser : EpisodeListParser {
                             pageUrl = URI(seriesUrl).resolve(href).toString(),
                         )
                     }
+                    .filter { it.pageUrl.startsWith("http://") || it.pageUrl.startsWith("https://") }
                     .preferInternalPlayer()
                 val playerUrl = sources.firstOrNull()?.pageUrl
                     ?: return@mapNotNull null

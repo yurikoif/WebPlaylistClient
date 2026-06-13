@@ -215,6 +215,7 @@ private fun WebPlaylistApp() {
     fun openEnteredUrl() {
         val raw = urlInput.trim()
         if (raw.isBlank()) return
+        error = null
         val normalized = repository.normalizeUrl(raw)
 
         if (!repository.supports(normalized)) {
