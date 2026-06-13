@@ -1,6 +1,7 @@
 package com.example.webplaylist.data
 
 import com.example.webplaylist.model.Episode
+import com.example.webplaylist.site.ResolvedMedia
 import com.example.webplaylist.site.SiteRegistry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -24,8 +25,8 @@ class PlaylistRepository(
         )
     }
 
-    suspend fun resolveEpisode(episode: Episode, seriesUrl: String): String {
-        return siteRegistry.adapterFor(seriesUrl).resolveEpisode(episode, seriesUrl)
+    suspend fun resolveEpisode(episode: Episode, seriesUrl: String, sourceStartIndex: Int = 0): ResolvedMedia {
+        return siteRegistry.adapterFor(seriesUrl).resolveEpisode(episode, seriesUrl, sourceStartIndex)
     }
 
     fun normalizeUrl(input: String): String {

@@ -27,11 +27,13 @@ class PlaybackProgressStore(context: Context) {
     }
 
     fun lastEpisodeIndex(seriesUrl: String): Int {
-        return prefs.getInt(episodeKey(seriesUrl), prefs.getInt(KEY_EPISODE_INDEX, 0))
+        val key = episodeKey(seriesUrl)
+        return if (prefs.contains(key)) prefs.getInt(key, 0) else 0
     }
 
     fun lastPositionMs(seriesUrl: String): Long {
-        return prefs.getLong(positionKey(seriesUrl), prefs.getLong(KEY_POSITION_MS, 0L))
+        val key = positionKey(seriesUrl)
+        return if (prefs.contains(key)) prefs.getLong(key, 0L) else 0L
     }
 
     fun saveSeries(url: String, title: String? = null) {

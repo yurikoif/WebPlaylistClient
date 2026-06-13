@@ -1,6 +1,7 @@
 package com.example.webplaylist.parser
 
 import com.example.webplaylist.model.Episode
+import com.example.webplaylist.model.EpisodeSource
 import org.jsoup.Jsoup
 import java.net.URI
 
@@ -10,16 +11,26 @@ class MyselfBbsEpisodeListParser : EpisodeListParser {
         return document.select("ul.main_list > li")
             .mapNotNull { row ->
                 val title = row.select("> a").first()?.text()?.trim().orEmpty()
-                val playerHref = row.select("a[data-href]").first()?.attr("data-href")
-                    ?.trim()
-                    ?.takeIf { it.isNotBlank() }
+                val sources = row.select("a[data-href]")
+                    .mapNotNull { link ->
+                        val href = link.attr("data-href").cleanHref()
+                            .takeIf { it.isNotBlank() }
+                            ?: return@mapNotNull null
+                        EpisodeSource(
+                            label = link.text().trim().ifBlank { "Source" },
+                            pageUrl = URI(seriesUrl).resolve(href).toString(),
+                        )
+                    }
+                    .preferInternalPlayer()
+                val playerUrl = sources.firstOrNull()?.pageUrl
                     ?: return@mapNotNull null
                 if (title.isBlank()) return@mapNotNull null
 
                 Episode(
                     title = title,
                     episodeNumber = episodeNumberRegex.find(title)?.groupValues?.get(1)?.toIntOrNull(),
-                    pageUrl = URI(seriesUrl).resolve(playerHref).toString(),
+                    pageUrl = playerUrl,
+                    sources = sources,
                 )
             }
             .let { episodes ->
@@ -43,3 +54,15 @@ class MyselfBbsEpisodeListParser : EpisodeListParser {
         val episodeNumberRegex = Regex("""第\s*(\d+)\s*話""")
     }
 }
+
+private fun String.cleanHref(): String {
+    return trim().trim('\r', '\n', '\t')
+}
+
+private fun List<EpisodeSource>.preferInternalPlayer(): List<EpisodeSource> {
+    return sortedBy { source ->
+        if (source.label == INTERNAL_SOURCE_LABEL) 0 else 1
+    }
+}
+
+private const val INTERNAL_SOURCE_LABEL = "站內"

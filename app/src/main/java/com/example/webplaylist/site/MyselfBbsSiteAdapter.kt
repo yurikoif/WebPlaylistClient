@@ -1,6 +1,7 @@
 package com.example.webplaylist.site
 
 import com.example.webplaylist.model.Episode
+import com.example.webplaylist.model.EpisodeSource
 import com.example.webplaylist.parser.MyselfBbsEpisodeListParser
 import com.example.webplaylist.resolver.MediaUrlResolver
 
@@ -32,8 +33,24 @@ class MyselfBbsSiteAdapter(
         return episodeParser.parse(html, seriesUrl)
     }
 
-    override suspend fun resolveEpisode(episode: Episode, seriesUrl: String): String {
-        return episode.mediaUrl ?: mediaResolver.resolve(episode.pageUrl, seriesUrl)
+    override suspend fun resolveEpisode(
+        episode: Episode,
+        seriesUrl: String,
+        sourceStartIndex: Int,
+    ): ResolvedMedia {
+        episode.mediaUrl?.let { return ResolvedMedia(it, 0) }
+
+        val sources = episode.sources.takeIf { it.isNotEmpty() }
+            ?: listOf(EpisodeSource("Default", episode.pageUrl))
+        var lastError: Throwable? = null
+        sources.drop(sourceStartIndex).forEachIndexed { offset, source ->
+            val sourceIndex = sourceStartIndex + offset
+            runCatching { source.mediaUrl ?: mediaResolver.resolve(source.pageUrl, seriesUrl) }
+                .onSuccess { return ResolvedMedia(it, sourceIndex) }
+                .onFailure { lastError = it }
+        }
+
+        throw lastError ?: IllegalStateException("No playable sources found")
     }
 
     private companion object {

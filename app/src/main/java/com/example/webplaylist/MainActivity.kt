@@ -81,6 +81,7 @@ import com.example.webplaylist.parser.MyselfBbsEpisodeListParser
 import com.example.webplaylist.resolver.HtmlMediaUrlResolver
 import com.example.webplaylist.resolver.VpxWebSocketMediaUrlResolver
 import com.example.webplaylist.site.MyselfBbsSiteAdapter
+import com.example.webplaylist.site.NnyySiteAdapter
 import com.example.webplaylist.site.SiteRegistry
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -121,6 +122,7 @@ private fun WebPlaylistApp() {
                     episodeParser = MyselfBbsEpisodeListParser(),
                     mediaResolver = mediaResolver,
                 ),
+                NnyySiteAdapter(client),
             ),
         )
         PlaylistRepository(
@@ -159,6 +161,7 @@ private fun WebPlaylistApp() {
     var leftRightPressHandledAsSeek by remember { mutableStateOf(false) }
     var playbackPositionMs by remember { mutableLongStateOf(progressStore.lastPositionMs(initialSeriesUrl)) }
     var playbackDurationMs by remember { mutableLongStateOf(0L) }
+    var activeSourceIndex by remember { mutableIntStateOf(0) }
     var focusedTransportIcon by remember { mutableStateOf<TransportIcon?>(null) }
     var urlInputFocused by remember { mutableStateOf(false) }
     var seriesListFocused by remember { mutableStateOf(false) }
@@ -222,7 +225,7 @@ private fun WebPlaylistApp() {
         loadSeries(normalized)
     }
 
-    fun playEpisode(index: Int, resumePositionMs: Long = 0L) {
+    fun playEpisode(index: Int, resumePositionMs: Long = 0L, sourceStartIndex: Int = 0) {
         val currentSeries = series ?: return
         val episode = currentSeries.episodes.getOrNull(index) ?: return
         scope.launch {
@@ -232,22 +235,25 @@ private fun WebPlaylistApp() {
             progressStore.saveProgress(currentSeries.url, index, resumePositionMs)
             lastSavedPosition = resumePositionMs
             status = "Resolving ${episode.title}"
-            runCatching { repository.resolveEpisode(episode, currentSeries.url) }
-                .onSuccess { mediaUrl ->
+            runCatching { repository.resolveEpisode(episode, currentSeries.url, sourceStartIndex) }
+                .onSuccess { resolvedMedia ->
+                    activeSourceIndex = resolvedMedia.sourceIndex
+                    val mediaUrl = resolvedMedia.url
                     resolvedEpisodeUrl = mediaUrl
                     val mediaItemBuilder = MediaItem.Builder().setUri(mediaUrl)
                     if (mediaUrl.substringBefore("?").endsWith(".m3u8", ignoreCase = true)) {
                         mediaItemBuilder.setMimeType(MimeTypes.APPLICATION_M3U8)
                     }
                     val mediaItem = mediaItemBuilder.build()
+                    val requestHeaders = mutableMapOf(
+                        "Referer" to if (currentSeries.siteId == MYSELF_BBS_SITE_ID) episode.pageUrl else currentSeries.url,
+                    )
+                    if (currentSeries.siteId == MYSELF_BBS_SITE_ID) {
+                        requestHeaders["Origin"] = "https://v.myself-bbs.com"
+                    }
                     val dataSourceFactory = DefaultHttpDataSource.Factory()
                         .setUserAgent(USER_AGENT)
-                        .setDefaultRequestProperties(
-                            mapOf(
-                                "Referer" to episode.pageUrl,
-                                "Origin" to "https://v.myself-bbs.com",
-                            )
-                        )
+                        .setDefaultRequestProperties(requestHeaders)
                     val mediaSource = if (mediaUrl.substringBefore("?").endsWith(".m3u8", ignoreCase = true)) {
                         HlsMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
                     } else {
@@ -332,9 +338,18 @@ private fun WebPlaylistApp() {
             }
 
             override fun onPlayerError(playbackError: PlaybackException) {
-                error = "Player error: ${playbackError.errorCodeName}"
-                status = "Playback failed"
-                showPlaylist = true
+                val currentSeries = series
+                val currentEpisode = currentSeries?.episodes?.getOrNull(selectedEpisode)
+                val canTryNextSource = currentEpisode != null &&
+                    (currentSeries.siteId == NNYY_SITE_ID || activeSourceIndex + 1 < currentEpisode.sources.size)
+                if (canTryNextSource) {
+                    status = "Trying another source"
+                    playEpisode(selectedEpisode, player.currentPosition.coerceAtLeast(0L), activeSourceIndex + 1)
+                } else {
+                    error = "Player error: ${playbackError.errorCodeName}"
+                    status = "Playback failed"
+                    showPlaylist = true
+                }
             }
         }
         player.addListener(listener)
@@ -1064,6 +1079,8 @@ private fun urlHostHint(url: String): String {
     }.getOrElse { url }
 }
 
+private const val MYSELF_BBS_SITE_ID = "myself-bbs"
+private const val NNYY_SITE_ID = "nnyy"
 private const val DEFAULT_SERIES_URL = "https://myself-bbs.com/thread-44169-1-1.html"
 private const val USER_AGENT = "Mozilla/5.0"
 private const val SEEK_STEP_MS = 10_000L

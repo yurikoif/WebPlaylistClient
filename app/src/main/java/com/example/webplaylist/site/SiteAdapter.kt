@@ -14,5 +14,10 @@ interface SiteAdapter {
 
     fun parseEpisodes(html: String, seriesUrl: String): List<Episode>
 
-    suspend fun resolveEpisode(episode: Episode, seriesUrl: String): String
+    suspend fun resolveEpisode(episode: Episode, seriesUrl: String, sourceStartIndex: Int = 0): ResolvedMedia
 }
+
+data class ResolvedMedia(
+    val url: String,
+    val sourceIndex: Int,
+)
