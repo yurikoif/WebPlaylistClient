@@ -654,12 +654,12 @@ private fun WebPlaylistApp() {
                         .background(
                             Brush.verticalGradient(
                                 colorStops = arrayOf(
-                                    0.00f to Color(0x82000000),
-                                    0.16f to Color(0x58000000),
-                                    0.40f to Color(0x24000000),
-                                    0.58f to Color(0x18000000),
-                                    0.84f to Color(0x64000000),
-                                    1.00f to Color(0x96000000),
+                                    0.00f to Color(0x92000000),
+                                    0.16f to Color(0x66000000),
+                                    0.40f to Color(0x2A000000),
+                                    0.58f to Color(0x1C000000),
+                                    0.84f to Color(0x72000000),
+                                    1.00f to Color(0xA6000000),
                                 ),
                             ),
                         ),
@@ -934,7 +934,7 @@ private fun WebPlaylistApp() {
                             Text(
                                 text = series?.title ?: "Episodes",
                                 color = Color.White,
-                                style = MaterialTheme.typography.titleMedium,
+                                style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
