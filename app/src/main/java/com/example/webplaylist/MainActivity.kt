@@ -6,32 +6,27 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -47,6 +42,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -54,7 +50,6 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -81,14 +76,18 @@ import androidx.media3.ui.PlayerView
 import com.example.webplaylist.data.LoadedSeries
 import com.example.webplaylist.data.PlaybackProgressStore
 import com.example.webplaylist.data.PlaylistRepository
+import com.example.webplaylist.data.SavedSeries
 import com.example.webplaylist.parser.MyselfBbsEpisodeListParser
 import com.example.webplaylist.resolver.HtmlMediaUrlResolver
 import com.example.webplaylist.resolver.VpxWebSocketMediaUrlResolver
+import com.example.webplaylist.site.MyselfBbsSiteAdapter
+import com.example.webplaylist.site.SiteRegistry
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
+import java.net.URI
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -115,17 +114,31 @@ private fun WebPlaylistApp() {
     val repository = remember {
         val client = OkHttpClient.Builder().build()
         val vpxResolver = VpxWebSocketMediaUrlResolver(client)
+        val mediaResolver = HtmlMediaUrlResolver(client, vpxResolver)
+        val siteRegistry = SiteRegistry(
+            listOf(
+                MyselfBbsSiteAdapter(
+                    episodeParser = MyselfBbsEpisodeListParser(),
+                    mediaResolver = mediaResolver,
+                ),
+            ),
+        )
         PlaylistRepository(
             client = client,
-            episodeParser = MyselfBbsEpisodeListParser(),
-            resolver = HtmlMediaUrlResolver(client, vpxResolver),
+            siteRegistry = siteRegistry,
         )
     }
     val player = remember { ExoPlayer.Builder(context).build() }
 
-    val initialSeriesUrl = remember { progressStore.lastSeriesUrl() ?: DEFAULT_SERIES_URL }
+    val initialSavedSeries = remember { withDefaultSeries(progressStore.savedSeries()) }
+    val initialSeriesUrl = remember {
+        progressStore.lastSeriesUrl()
+            ?: initialSavedSeries.firstOrNull()?.url
+            ?: DEFAULT_SERIES_URL
+    }
     var urlInput by remember { mutableStateOf(initialSeriesUrl) }
     var series by remember { mutableStateOf<LoadedSeries?>(null) }
+    var savedSeries by remember { mutableStateOf(initialSavedSeries) }
     var selectedEpisode by remember { mutableIntStateOf(progressStore.lastEpisodeIndex(initialSeriesUrl)) }
     var status by remember { mutableStateOf("Loading sample series") }
     var error by remember { mutableStateOf<String?>(null) }
@@ -137,11 +150,10 @@ private fun WebPlaylistApp() {
     var loopCurrentEpisode by remember { mutableStateOf(false) }
     var pendingAutoPlay by remember { mutableStateOf<Pair<Int, Long>?>(null) }
     var focusPlayWhenShown by remember { mutableStateOf(false) }
-    var focusPreviousWhenShown by remember { mutableStateOf(false) }
     var focusBack10WhenShown by remember { mutableStateOf(false) }
     var focusForward10WhenShown by remember { mutableStateOf(false) }
-    var focusNextWhenShown by remember { mutableStateOf(false) }
     var focusUrlWhenShown by remember { mutableStateOf(false) }
+    var focusSeriesWhenShown by remember { mutableStateOf(false) }
     var focusEpisodeWhenShown by remember { mutableStateOf(false) }
     var seekJob by remember { mutableStateOf<Job?>(null) }
     var leftRightPressHandledAsSeek by remember { mutableStateOf(false) }
@@ -150,6 +162,7 @@ private fun WebPlaylistApp() {
     var focusedTransportIcon by remember { mutableStateOf<TransportIcon?>(null) }
     var urlInputFocused by remember { mutableStateOf(false) }
     var playlistFocused by remember { mutableStateOf(false) }
+    var seriesActionTarget by remember { mutableStateOf<SavedSeries?>(null) }
     var overlayActivityTick by remember { mutableIntStateOf(0) }
     val rootFocusRequester = remember { FocusRequester() }
     val previousEpisodeFocusRequester = remember { FocusRequester() }
@@ -158,9 +171,12 @@ private fun WebPlaylistApp() {
     val forward10FocusRequester = remember { FocusRequester() }
     val nextEpisodeFocusRequester = remember { FocusRequester() }
     val currentEpisodeFocusRequester = remember { FocusRequester() }
+    val currentSeriesFocusRequester = remember { FocusRequester() }
     val urlFocusRequester = remember { FocusRequester() }
+    val episodeListState = rememberLazyListState()
+    val savedSeriesListState = rememberLazyListState()
 
-    fun loadSeries(url: String) {
+    fun loadSeries(url: String, saveToHistory: Boolean = true) {
         scope.launch {
             loading = true
             error = null
@@ -170,7 +186,10 @@ private fun WebPlaylistApp() {
                     series = loaded
                     selectedEpisode = progressStore.lastEpisodeIndex(loaded.url)
                         .coerceIn(0, loaded.episodes.lastIndex.coerceAtLeast(0))
-                    progressStore.saveSeries(loaded.url)
+                    if (saveToHistory) {
+                        progressStore.saveSeries(loaded.url, loaded.title)
+                        savedSeries = withDefaultSeries(progressStore.savedSeries())
+                    }
                     urlInput = loaded.url
                     status = "${loaded.episodes.size} episodes"
                     resolvedEpisodeUrl = null
@@ -191,15 +210,10 @@ private fun WebPlaylistApp() {
     fun openEnteredUrl() {
         val raw = urlInput.trim()
         if (raw.isBlank()) return
-        val normalized = when {
-            raw.startsWith("https://") || raw.startsWith("http://") -> raw
-            raw.startsWith("myself-bbs.com/") -> "https://$raw"
-            raw.startsWith("thread-") -> "https://myself-bbs.com/$raw"
-            else -> raw
-        }
+        val normalized = repository.normalizeUrl(raw)
 
-        if (!seriesUrlPattern.containsMatchIn(normalized)) {
-            error = "Enter a series URL like https://myself-bbs.com/thread-44169-1-1.html"
+        if (!repository.supports(normalized)) {
+            error = "Enter a supported series URL (${repository.supportedUrlHint()})"
             return
         }
 
@@ -364,6 +378,7 @@ private fun WebPlaylistApp() {
     fun showControlsWithoutPause(focusTarget: OverlayFocusTarget) {
         when (focusTarget) {
             OverlayFocusTarget.Url -> focusUrlWhenShown = true
+            OverlayFocusTarget.Series -> focusSeriesWhenShown = true
             OverlayFocusTarget.Play -> focusPlayWhenShown = true
             OverlayFocusTarget.Back10 -> focusBack10WhenShown = true
             OverlayFocusTarget.Forward10 -> focusForward10WhenShown = true
@@ -387,18 +402,14 @@ private fun WebPlaylistApp() {
     LaunchedEffect(
         showPlaylist,
         focusPlayWhenShown,
-        focusPreviousWhenShown,
         focusBack10WhenShown,
         focusForward10WhenShown,
-        focusNextWhenShown,
         focusUrlWhenShown,
+        focusSeriesWhenShown,
         focusEpisodeWhenShown,
     ) {
         if (!showPlaylist) {
             rootFocusRequester.requestFocus()
-        } else if (focusPreviousWhenShown) {
-            previousEpisodeFocusRequester.requestFocus()
-            focusPreviousWhenShown = false
         } else if (focusPlayWhenShown) {
             playPauseFocusRequester.requestFocus()
             focusPlayWhenShown = false
@@ -408,14 +419,26 @@ private fun WebPlaylistApp() {
         } else if (focusForward10WhenShown) {
             forward10FocusRequester.requestFocus()
             focusForward10WhenShown = false
-        } else if (focusNextWhenShown) {
-            nextEpisodeFocusRequester.requestFocus()
-            focusNextWhenShown = false
         } else if (focusUrlWhenShown) {
             urlFocusRequester.requestFocus()
             focusUrlWhenShown = false
+        } else if (focusSeriesWhenShown) {
+            val index = savedSeries.indexOfFirst { it.url == series?.url }
+            if (index >= 0) {
+                savedSeriesListState.scrollToItem(index)
+                withFrameNanos { }
+                currentSeriesFocusRequester.requestFocus()
+            } else {
+                urlFocusRequester.requestFocus()
+            }
+            focusSeriesWhenShown = false
         } else if (focusEpisodeWhenShown) {
-            currentEpisodeFocusRequester.requestFocus()
+            val lastIndex = series?.episodes?.lastIndex ?: -1
+            if (lastIndex >= 0) {
+                episodeListState.scrollToItem(selectedEpisode.coerceIn(0, lastIndex))
+                withFrameNanos { }
+                currentEpisodeFocusRequester.requestFocus()
+            }
             focusEpisodeWhenShown = false
         }
     }
@@ -540,7 +563,7 @@ private fun WebPlaylistApp() {
                             true
                         }
                         Key.DirectionUp -> {
-                            showControlsWithoutPause(OverlayFocusTarget.Url)
+                            showControlsWithoutPause(OverlayFocusTarget.Series)
                             true
                         }
                         Key.DirectionDown -> {
@@ -599,50 +622,13 @@ private fun WebPlaylistApp() {
                         .clip(RoundedCornerShape(8.dp))
                         .background(PANEL_BACKGROUND)
                         .border(1.dp, PANEL_BORDER, RoundedCornerShape(8.dp))
-                        .onPreviewKeyEvent { event ->
-                            if (event.key != Key.DirectionDown) return@onPreviewKeyEvent false
-                            when (event.type) {
-                                KeyEventType.KeyDown -> true
-                                KeyEventType.KeyUp -> {
-                                    playPauseFocusRequester.requestFocus()
-                                    overlayActivityTick++
-                                    true
-                                }
-                                else -> false
-                            }
-                        }
                         .padding(12.dp),
                 ) {
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Web Playlist",
-                                color = Color.White,
-                                style = MaterialTheme.typography.headlineSmall,
-                            )
-                            Text(
-                                text = status,
-                                color = Color(0xFFB8C3CC),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        if (resolvedEpisodeUrl != null) {
-                            Button(
-                                onClick = { showPlaylist = false },
-                                colors = translucentButtonColors(),
-                            ) {
-                                Text("Hide")
-                            }
-                        }
-                    }
-                    Spacer(Modifier.height(6.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         OutlinedTextField(
                             value = urlInput,
                             onValueChange = { urlInput = it },
@@ -652,6 +638,18 @@ private fun WebPlaylistApp() {
                                 .onFocusChanged {
                                     urlInputFocused = it.isFocused
                                     if (it.isFocused) playlistFocused = false
+                                }
+                                .onPreviewKeyEvent { event ->
+                                    if (event.key != Key.DirectionDown) return@onPreviewKeyEvent false
+                                    when (event.type) {
+                                        KeyEventType.KeyDown -> true
+                                        KeyEventType.KeyUp -> {
+                                            focusSeriesWhenShown = true
+                                            overlayActivityTick++
+                                            true
+                                        }
+                                        else -> false
+                                    }
                                 },
                             singleLine = true,
                             label = { Text("Series URL") },
@@ -663,6 +661,80 @@ private fun WebPlaylistApp() {
                             colors = translucentButtonColors(),
                         ) {
                             Text("Open")
+                        }
+                        if (resolvedEpisodeUrl != null) {
+                            Button(
+                                onClick = { showPlaylist = false },
+                                colors = translucentButtonColors(),
+                            ) {
+                                Text("Hide")
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    if (savedSeries.isEmpty()) {
+                        Text(
+                            text = status,
+                            color = Color(0xFFB8C3CC),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    } else {
+                        LazyRow(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .onPreviewKeyEvent { event ->
+                                    when (event.key) {
+                                        Key.DirectionUp -> {
+                                            when (event.type) {
+                                                KeyEventType.KeyDown -> true
+                                                KeyEventType.KeyUp -> {
+                                                    urlFocusRequester.requestFocus()
+                                                    overlayActivityTick++
+                                                    true
+                                                }
+                                                else -> false
+                                            }
+                                        }
+                                        Key.DirectionDown -> {
+                                            when (event.type) {
+                                                KeyEventType.KeyDown -> true
+                                                KeyEventType.KeyUp -> {
+                                                    playPauseFocusRequester.requestFocus()
+                                                    overlayActivityTick++
+                                                    true
+                                                }
+                                                else -> false
+                                            }
+                                        }
+                                        else -> false
+                                    }
+                                },
+                            state = savedSeriesListState,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            itemsIndexed(savedSeries) { index, saved ->
+                                SeriesRailButton(
+                                    title = saved.title,
+                                    urlHint = urlHostHint(saved.url),
+                                    selected = saved.url == series?.url,
+                                    modifier = if (saved.url == series?.url) {
+                                        Modifier
+                                            .width(290.dp)
+                                            .focusRequester(currentSeriesFocusRequester)
+                                    } else {
+                                        Modifier.width(290.dp)
+                                    },
+                                    onFocused = {
+                                        playlistFocused = false
+                                    },
+                                    onLongPress = {
+                                        seriesActionTarget = saved
+                                        overlayActivityTick++
+                                    },
+                                    onClick = { loadSeries(saved.url) },
+                                )
+                            }
                         }
                     }
                     Spacer(Modifier.height(6.dp))
@@ -687,7 +759,7 @@ private fun WebPlaylistApp() {
                                     true
                                 }
                                 Key.DirectionDown -> {
-                                    currentEpisodeFocusRequester.requestFocus()
+                                    focusEpisodeWhenShown = true
                                     true
                                 }
                                 else -> false
@@ -825,6 +897,7 @@ private fun WebPlaylistApp() {
                     if (!series?.episodes.isNullOrEmpty()) {
                         LazyRow(
                             modifier = Modifier.fillMaxWidth(),
+                            state = episodeListState,
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
                             itemsIndexed(series?.episodes.orEmpty()) { index, episode ->
@@ -855,208 +928,67 @@ private fun WebPlaylistApp() {
                     }
                 }
             }
+
+            seriesActionTarget?.let { target ->
+                AlertDialog(
+                    onDismissRequest = { seriesActionTarget = null },
+                    title = { Text(target.title) },
+                    text = { Text(target.url) },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                if (target.url != DEFAULT_SERIES_URL) {
+                                    progressStore.deleteSeries(target.url)
+                                    savedSeries = withDefaultSeries(progressStore.savedSeries())
+                                }
+                                seriesActionTarget = null
+                                overlayActivityTick++
+                            },
+                            enabled = target.url != DEFAULT_SERIES_URL,
+                            colors = translucentButtonColors(),
+                        ) {
+                            Text("Delete")
+                        }
+                    },
+                    dismissButton = {
+                        Button(
+                            onClick = {
+                                seriesActionTarget = null
+                                overlayActivityTick++
+                            },
+                            colors = translucentButtonColors(),
+                        ) {
+                            Text("Cancel")
+                        }
+                    },
+                )
+            }
         }
     }
 }
 
-@Composable
-private fun TransportButton(
-    icon: TransportIcon,
-    enabled: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    onFocused: () -> Unit = {},
-) {
-    var focused by remember { mutableStateOf(false) }
-    Button(
-        onClick = onClick,
-        enabled = enabled,
-        modifier = modifier
-            .size(78.dp)
-            .onFocusChanged {
-                focused = it.isFocused
-                if (it.isFocused) onFocused()
-            }
-            .border(
-                width = if (focused) 3.dp else 1.dp,
-                color = if (focused) Color.White else Color(0x88FFFFFF),
-                shape = CircleShape,
-            ),
-        shape = CircleShape,
-        colors = ButtonDefaults.buttonColors(
-            containerColor = if (focused) Color(0x66FFFFFF) else Color(0x33FFFFFF),
-            contentColor = Color.White,
-            disabledContainerColor = Color(0x22FFFFFF),
-            disabledContentColor = Color(0x66FFFFFF),
-        ),
-        contentPadding = PaddingValues(0.dp),
-    ) {
-        TransportGlyph(icon = icon, enabled = enabled)
-    }
-}
-
-private enum class TransportIcon {
-    Previous,
-    Back10,
-    Play,
-    Pause,
-    Forward10,
-    Next,
-}
-
 private enum class OverlayFocusTarget {
     Url,
+    Series,
     Play,
     Back10,
     Forward10,
     Episode,
 }
 
-@Composable
-private fun PlaybackProgressPanel(
-    positionMs: Long,
-    durationMs: Long,
-    modifier: Modifier = Modifier,
-) {
-    val progress = if (durationMs > 0L) {
-        (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+private fun withDefaultSeries(savedSeries: List<SavedSeries>): List<SavedSeries> {
+    return if (savedSeries.any { it.url == DEFAULT_SERIES_URL }) {
+        savedSeries
     } else {
-        0f
-    }
-
-    Column(
-        modifier = modifier
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(6.dp)
-                .clip(RoundedCornerShape(6.dp))
-                .background(Color(0x44FFFFFF)),
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(progress)
-                    .fillMaxHeight()
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(Color.White),
-            )
-        }
-        Spacer(Modifier.height(6.dp))
-        Text(
-            text = "${formatPlaybackTime(positionMs)} / ${formatPlaybackTime(durationMs)}",
-            color = Color(0xFFB8C3CC),
-            style = MaterialTheme.typography.labelSmall,
-            modifier = Modifier.align(Alignment.End),
-        )
+        savedSeries + SavedSeries(DEFAULT_SERIES_URL, DEFAULT_SERIES_URL)
     }
 }
 
-@Composable
-private fun TransportGlyph(
-    icon: TransportIcon,
-    enabled: Boolean,
-) {
-    val glyphColor = if (enabled) Color.White else Color(0x66FFFFFF)
-    if (icon == TransportIcon.Back10 || icon == TransportIcon.Forward10) {
-        Text(
-            text = if (icon == TransportIcon.Back10) "-10s" else "+10s",
-            color = glyphColor,
-            style = MaterialTheme.typography.labelLarge,
-            maxLines = 1,
-        )
-        return
-    }
-
-    Canvas(modifier = Modifier.size(34.dp)) {
-        val w = size.width
-        val h = size.height
-        when (icon) {
-            TransportIcon.Play -> {
-                val path = Path().apply {
-                    moveTo(w * 0.34f, h * 0.22f)
-                    lineTo(w * 0.34f, h * 0.78f)
-                    lineTo(w * 0.78f, h * 0.5f)
-                    close()
-                }
-                drawPath(path, glyphColor)
-            }
-            TransportIcon.Pause -> {
-                drawRoundRect(glyphColor, topLeft = androidx.compose.ui.geometry.Offset(w * 0.26f, h * 0.22f), size = androidx.compose.ui.geometry.Size(w * 0.16f, h * 0.56f))
-                drawRoundRect(glyphColor, topLeft = androidx.compose.ui.geometry.Offset(w * 0.58f, h * 0.22f), size = androidx.compose.ui.geometry.Size(w * 0.16f, h * 0.56f))
-            }
-            TransportIcon.Back10,
-            TransportIcon.Forward10 -> Unit
-            TransportIcon.Previous -> {
-                drawRoundRect(glyphColor, topLeft = androidx.compose.ui.geometry.Offset(w * 0.18f, h * 0.22f), size = androidx.compose.ui.geometry.Size(w * 0.12f, h * 0.56f))
-                val path = Path().apply {
-                    moveTo(w * 0.78f, h * 0.2f)
-                    lineTo(w * 0.78f, h * 0.8f)
-                    lineTo(w * 0.32f, h * 0.5f)
-                    close()
-                }
-                drawPath(path, glyphColor)
-            }
-            TransportIcon.Next -> {
-                val path = Path().apply {
-                    moveTo(w * 0.22f, h * 0.2f)
-                    lineTo(w * 0.22f, h * 0.8f)
-                    lineTo(w * 0.68f, h * 0.5f)
-                    close()
-                }
-                drawPath(path, glyphColor)
-                drawRoundRect(glyphColor, topLeft = androidx.compose.ui.geometry.Offset(w * 0.72f, h * 0.22f), size = androidx.compose.ui.geometry.Size(w * 0.12f, h * 0.56f))
-            }
-        }
-    }
+private fun urlHostHint(url: String): String {
+    return runCatching {
+        URI(url).host?.removePrefix("www.") ?: url
+    }.getOrElse { url }
 }
-
-@Composable
-private fun EpisodeRailButton(
-    text: String,
-    selected: Boolean,
-    modifier: Modifier = Modifier,
-    onFocused: () -> Unit = {},
-    onClick: () -> Unit,
-) {
-    var focused by remember { mutableStateOf(false) }
-    val borderColor = when {
-        focused -> Color.White
-        selected -> CURRENT_EPISODE_BLUE
-        else -> Color.Transparent
-    }
-
-    Button(
-        onClick = onClick,
-        modifier = modifier
-            .height(50.dp)
-            .onFocusChanged {
-                focused = it.isFocused
-                if (it.isFocused) onFocused()
-            }
-            .border(2.dp, borderColor, RoundedCornerShape(6.dp)),
-        shape = RoundedCornerShape(6.dp),
-        colors = ButtonDefaults.buttonColors(
-            containerColor = if (selected) CURRENT_EPISODE_BLUE.copy(alpha = 0.36f) else Color(0x33FFFFFF),
-            contentColor = Color.White,
-        ),
-    ) {
-        Text(
-            text = text,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
-}
-
-@Composable
-private fun translucentButtonColors() = ButtonDefaults.buttonColors(
-    containerColor = Color(0x33FFFFFF),
-    contentColor = Color.White,
-    disabledContainerColor = Color(0x22FFFFFF),
-    disabledContentColor = Color(0x77FFFFFF),
-)
 
 private const val DEFAULT_SERIES_URL = "https://myself-bbs.com/thread-44169-1-1.html"
 private const val USER_AGENT = "Mozilla/5.0"
@@ -1068,17 +1000,3 @@ private const val OVERLAY_AUTO_HIDE_MS = 10_000L
 private const val PROGRESS_SAVE_INTERVAL_MS = 5_000L
 private val PANEL_BACKGROUND = Color(0xC8242B33)
 private val PANEL_BORDER = Color(0x88D7E0EA)
-private val CURRENT_EPISODE_BLUE = Color(0xFF8FD7FF)
-private val seriesUrlPattern = Regex("""https?://(?:www\.)?myself-bbs\.com/thread-\d+-\d+-\d+\.html""")
-
-private fun formatPlaybackTime(ms: Long): String {
-    val totalSeconds = (ms / 1000L).coerceAtLeast(0L)
-    val hours = totalSeconds / 3600L
-    val minutes = (totalSeconds % 3600L) / 60L
-    val seconds = totalSeconds % 60L
-    return if (hours > 0L) {
-        "%d:%02d:%02d".format(hours, minutes, seconds)
-    } else {
-        "%d:%02d".format(minutes, seconds)
-    }
-}

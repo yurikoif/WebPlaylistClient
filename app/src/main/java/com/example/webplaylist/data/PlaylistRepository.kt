@@ -1,8 +1,7 @@
 package com.example.webplaylist.data
 
 import com.example.webplaylist.model.Episode
-import com.example.webplaylist.parser.EpisodeListParser
-import com.example.webplaylist.resolver.MediaUrlResolver
+import com.example.webplaylist.site.SiteRegistry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -10,20 +9,35 @@ import okhttp3.Request
 
 class PlaylistRepository(
     private val client: OkHttpClient,
-    private val episodeParser: EpisodeListParser,
-    private val resolver: MediaUrlResolver,
+    private val siteRegistry: SiteRegistry,
 ) {
     suspend fun loadSeries(url: String): LoadedSeries = withContext(Dispatchers.IO) {
-        val html = get(url)
+        val normalizedUrl = siteRegistry.normalizeUrl(url)
+        val adapter = siteRegistry.adapterFor(normalizedUrl)
+        val html = get(normalizedUrl)
         LoadedSeries(
-            url = url,
-            title = episodeParser.parseTitle(html).ifBlank { url },
-            episodes = episodeParser.parse(html, url),
+            url = normalizedUrl,
+            siteId = adapter.id,
+            siteName = adapter.displayName,
+            title = adapter.parseTitle(html, normalizedUrl),
+            episodes = adapter.parseEpisodes(html, normalizedUrl),
         )
     }
 
     suspend fun resolveEpisode(episode: Episode, seriesUrl: String): String {
-        return episode.mediaUrl ?: resolver.resolve(episode.pageUrl, seriesUrl)
+        return siteRegistry.adapterFor(seriesUrl).resolveEpisode(episode, seriesUrl)
+    }
+
+    fun normalizeUrl(input: String): String {
+        return siteRegistry.normalizeUrl(input)
+    }
+
+    fun supports(url: String): Boolean {
+        return runCatching { siteRegistry.adapterFor(url) }.isSuccess
+    }
+
+    fun supportedUrlHint(): String {
+        return siteRegistry.supportedUrlHint()
     }
 
     private fun get(url: String): String {
@@ -44,6 +58,8 @@ class PlaylistRepository(
 
 data class LoadedSeries(
     val url: String,
+    val siteId: String,
+    val siteName: String,
     val title: String,
     val episodes: List<Episode>,
 )
