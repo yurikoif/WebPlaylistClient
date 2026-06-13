@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
@@ -45,7 +44,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -167,6 +165,7 @@ private fun WebPlaylistApp() {
     var playlistFocused by remember { mutableStateOf(false) }
     var seriesActionTarget by remember { mutableStateOf<SavedSeries?>(null) }
     var overlayActivityTick by remember { mutableIntStateOf(0) }
+    var backOpenedOverlayAtMs by remember { mutableLongStateOf(0L) }
     val rootFocusRequester = remember { FocusRequester() }
     val previousEpisodeFocusRequester = remember { FocusRequester() }
     val playPauseFocusRequester = remember { FocusRequester() }
@@ -460,8 +459,14 @@ private fun WebPlaylistApp() {
 
     BackHandler(enabled = resolvedEpisodeUrl != null) {
         if (showPlaylist) {
-            exitApp()
+            val now = System.currentTimeMillis()
+            if (now - backOpenedOverlayAtMs <= DOUBLE_BACK_EXIT_WINDOW_MS) {
+                exitApp()
+            } else {
+                hideControls()
+            }
         } else {
+            backOpenedOverlayAtMs = System.currentTimeMillis()
             showControlsWithoutPause(OverlayFocusTarget.Play)
         }
     }
@@ -520,8 +525,14 @@ private fun WebPlaylistApp() {
                         KeyEventType.KeyDown -> return@onPreviewKeyEvent true
                         KeyEventType.KeyUp -> {
                             if (showPlaylist) {
-                                exitApp()
+                                val now = System.currentTimeMillis()
+                                if (now - backOpenedOverlayAtMs <= DOUBLE_BACK_EXIT_WINDOW_MS) {
+                                    exitApp()
+                                } else {
+                                    hideControls()
+                                }
                             } else {
+                                backOpenedOverlayAtMs = System.currentTimeMillis()
                                 showControlsWithoutPause(OverlayFocusTarget.Play)
                             }
                             return@onPreviewKeyEvent true
@@ -643,12 +654,12 @@ private fun WebPlaylistApp() {
                         .background(
                             Brush.verticalGradient(
                                 colorStops = arrayOf(
-                                    0.00f to Color(0xB0000000),
-                                    0.18f to Color(0x66000000),
-                                    0.42f to Color(0x18000000),
+                                    0.00f to Color(0x82000000),
+                                    0.16f to Color(0x58000000),
+                                    0.40f to Color(0x24000000),
                                     0.58f to Color(0x18000000),
-                                    0.82f to Color(0x70000000),
-                                    1.00f to Color(0xC0000000),
+                                    0.84f to Color(0x64000000),
+                                    1.00f to Color(0x96000000),
                                 ),
                             ),
                         ),
@@ -659,8 +670,6 @@ private fun WebPlaylistApp() {
                         .align(Alignment.TopCenter)
                         .padding(top = 18.dp)
                         .width(860.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(PANEL_BACKGROUND)
                         .padding(12.dp),
                 ) {
                     Row(
@@ -908,8 +917,6 @@ private fun WebPlaylistApp() {
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
                         .padding(horizontal = 24.dp, vertical = 12.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(PANEL_BACKGROUND)
                         .padding(10.dp),
                 ) {
                     PlaybackProgressPanel(
@@ -1064,5 +1071,5 @@ private const val LONG_PRESS_SEEK_STEP_MS = 30_000L
 private const val LONG_PRESS_START_MS = 500L
 private const val LONG_PRESS_SEEK_REPEAT_MS = 700L
 private const val OVERLAY_AUTO_HIDE_MS = 10_000L
+private const val DOUBLE_BACK_EXIT_WINDOW_MS = 500L
 private const val PROGRESS_SAVE_INTERVAL_MS = 5_000L
-private val PANEL_BACKGROUND = Color(0xA8242B33)
