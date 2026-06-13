@@ -466,6 +466,11 @@ private fun WebPlaylistApp() {
             .focusRequester(rootFocusRequester)
             .focusable()
             .onPreviewKeyEvent { event ->
+                if (showPlaylist && event.type == KeyEventType.KeyUp && event.key == Key.Back) {
+                    hideControls()
+                    return@onPreviewKeyEvent true
+                }
+
                 if (showPlaylist && event.type == KeyEventType.KeyUp) {
                     overlayActivityTick++
                 }
@@ -580,12 +585,15 @@ private fun WebPlaylistApp() {
                         .background(Color(0xAA101418))
                         .border(1.dp, Color(0x663A4654), RoundedCornerShape(8.dp))
                         .onPreviewKeyEvent { event ->
-                            if (event.type == KeyEventType.KeyUp && event.key == Key.DirectionDown) {
-                                playPauseFocusRequester.requestFocus()
-                                overlayActivityTick++
-                                true
-                            } else {
-                                false
+                            if (event.key != Key.DirectionDown) return@onPreviewKeyEvent false
+                            when (event.type) {
+                                KeyEventType.KeyDown -> true
+                                KeyEventType.KeyUp -> {
+                                    playPauseFocusRequester.requestFocus()
+                                    overlayActivityTick++
+                                    true
+                                }
+                                else -> false
                             }
                         }
                         .padding(12.dp),
@@ -740,12 +748,15 @@ private fun WebPlaylistApp() {
                         .background(Color(0xAA101418))
                         .border(1.dp, Color(0x663A4654), RoundedCornerShape(8.dp))
                         .onPreviewKeyEvent { event ->
-                            if (event.type == KeyEventType.KeyUp && event.key == Key.DirectionUp) {
-                                playPauseFocusRequester.requestFocus()
-                                overlayActivityTick++
-                                true
-                            } else {
-                                false
+                            if (event.key != Key.DirectionUp) return@onPreviewKeyEvent false
+                            when (event.type) {
+                                KeyEventType.KeyDown -> true
+                                KeyEventType.KeyUp -> {
+                                    playPauseFocusRequester.requestFocus()
+                                    overlayActivityTick++
+                                    true
+                                }
+                                else -> false
                             }
                         }
                         .padding(10.dp),
