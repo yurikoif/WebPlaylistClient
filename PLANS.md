@@ -6,10 +6,12 @@ Build an Android TV / Google TV APK that turns an old episode-list video website
 The app should:
 - Load a configured series page URL or bundled sample HTML.
 - Parse episodes from the page.
+- Use a video-first TV design where playback fills the screen and everything else appears as a floating overlay.
 - Display episodes in correct order with TV remote navigation.
 - Resolve selected episode pages/player URLs into playable media URLs where possible.
 - Play with AndroidX Media3 / ExoPlayer.
 - Auto-advance when playback ends.
+- Let the user toggle end behavior between next episode and looping the current episode.
 - Remember last watched episode and approximate playback position locally.
 - Avoid bypassing DRM, login, payment, captcha, or anti-circumvention controls.
 

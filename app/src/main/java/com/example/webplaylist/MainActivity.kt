@@ -2,9 +2,11 @@ package com.example.webplaylist
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,7 +44,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -51,6 +60,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.example.webplaylist.data.LoadedSeries
 import com.example.webplaylist.data.PlaybackProgressStore
@@ -93,6 +103,7 @@ private fun WebPlaylistApp() {
     val player = remember { ExoPlayer.Builder(context).build() }
 
     var query by remember { mutableStateOf("") }
+    var urlInput by remember { mutableStateOf(DEFAULT_SERIES_URL) }
     var series by remember { mutableStateOf<LoadedSeries?>(null) }
     var results by remember { mutableStateOf<List<SeriesSearchResult>>(emptyList()) }
     var selectedEpisode by remember { mutableIntStateOf(progressStore.lastEpisodeIndex()) }
@@ -101,6 +112,10 @@ private fun WebPlaylistApp() {
     var loading by remember { mutableStateOf(false) }
     var resolvedEpisodeUrl by remember { mutableStateOf<String?>(null) }
     var lastSavedPosition by remember { mutableLongStateOf(progressStore.lastPositionMs()) }
+    var showPlaylist by remember { mutableStateOf(true) }
+    var isPlaying by remember { mutableStateOf(false) }
+    var loopCurrentEpisode by remember { mutableStateOf(false) }
+    val rootFocusRequester = remember { FocusRequester() }
 
     fun loadSeries(url: String) {
         scope.launch {
@@ -116,8 +131,10 @@ private fun WebPlaylistApp() {
                         0
                     }
                     progressStore.saveSeries(loaded.url)
+                    urlInput = loaded.url
                     status = "${loaded.episodes.size} episodes"
                     resolvedEpisodeUrl = null
+                    showPlaylist = true
                 }
                 .onFailure {
                     error = it.message ?: "Series load failed"
@@ -148,6 +165,24 @@ private fun WebPlaylistApp() {
         }
     }
 
+    fun openEnteredUrl() {
+        val raw = urlInput.trim()
+        if (raw.isBlank()) return
+        val normalized = when {
+            raw.startsWith("https://") || raw.startsWith("http://") -> raw
+            raw.startsWith("myself-bbs.com/") -> "https://$raw"
+            raw.startsWith("thread-") -> "https://myself-bbs.com/$raw"
+            else -> raw
+        }
+
+        if (!seriesUrlPattern.containsMatchIn(normalized)) {
+            error = "Enter a series URL like https://myself-bbs.com/thread-44169-1-1.html"
+            return
+        }
+
+        loadSeries(normalized)
+    }
+
     fun playEpisode(index: Int, resumePositionMs: Long = 0L) {
         val currentSeries = series ?: return
         val episode = currentSeries.episodes.getOrNull(index) ?: return
@@ -163,6 +198,7 @@ private fun WebPlaylistApp() {
                     player.prepare()
                     player.playWhenReady = true
                     status = episode.title
+                    showPlaylist = false
                 }
                 .onFailure {
                     error = it.message ?: "Could not resolve media URL"
@@ -177,14 +213,20 @@ private fun WebPlaylistApp() {
         loadSeries(savedUrl)
     }
 
-    DisposableEffect(player, series, selectedEpisode) {
+    DisposableEffect(player, series, selectedEpisode, loopCurrentEpisode) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_ENDED) {
-                    val next = selectedEpisode + 1
-                    if (next <= (series?.episodes?.lastIndex ?: -1)) {
-                        progressStore.saveProgress(next, 0L)
-                        playEpisode(next)
+                    if (loopCurrentEpisode) {
+                        progressStore.saveProgress(selectedEpisode, 0L)
+                        player.seekTo(0L)
+                        player.play()
+                    } else {
+                        val next = selectedEpisode + 1
+                        if (next <= (series?.episodes?.lastIndex ?: -1)) {
+                            progressStore.saveProgress(next, 0L)
+                            playEpisode(next)
+                        }
                     }
                 }
             }
@@ -194,6 +236,16 @@ private fun WebPlaylistApp() {
             progressStore.saveProgress(selectedEpisode, player.currentPosition.coerceAtLeast(0L))
             player.removeListener(listener)
         }
+    }
+
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onIsPlayingChanged(value: Boolean) {
+                isPlaying = value
+            }
+        }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
     }
 
     DisposableEffect(Unit) {
@@ -211,124 +263,250 @@ private fun WebPlaylistApp() {
         }
     }
 
+    LaunchedEffect(showPlaylist) {
+        if (!showPlaylist) rootFocusRequester.requestFocus()
+    }
+
+    BackHandler(enabled = showPlaylist && resolvedEpisodeUrl != null) {
+        showPlaylist = false
+    }
+
+    fun playPrevious() {
+        val previous = selectedEpisode - 1
+        if (previous >= 0) playEpisode(previous)
+    }
+
+    fun playNext() {
+        val next = selectedEpisode + 1
+        if (next <= (series?.episodes?.lastIndex ?: -1)) playEpisode(next)
+    }
+
     Surface(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .focusRequester(rootFocusRequester)
+            .focusable()
+            .onPreviewKeyEvent { event ->
+                if (
+                    !showPlaylist &&
+                    event.type == KeyEventType.KeyUp &&
+                    (event.key == Key.DirectionCenter || event.key == Key.Enter || event.key == Key.NumPadEnter)
+                ) {
+                    showPlaylist = true
+                    true
+                } else {
+                    false
+                }
+            },
         color = Color(0xFF101418),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(28.dp),
-            horizontalArrangement = Arrangement.spacedBy(24.dp),
-        ) {
-            Column(
-                modifier = Modifier
-                    .width(420.dp)
-                    .fillMaxHeight(),
-            ) {
-                Text(
-                    text = "Web Playlist",
-                    color = Color.White,
-                    style = MaterialTheme.typography.headlineMedium,
-                )
-                Text(
-                    text = status,
-                    color = Color(0xFFB8C3CC),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.height(18.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(
-                        value = query,
-                        onValueChange = { query = it },
-                        modifier = Modifier.weight(1f),
-                        singleLine = true,
-                        label = { Text("Search anime") },
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                        keyboardActions = KeyboardActions(onSearch = { search() }),
-                    )
-                    Button(onClick = { search() }) {
-                        Text("Search")
+        Box(modifier = Modifier.fillMaxSize()) {
+            AndroidView(
+                factory = {
+                    PlayerView(it).apply {
+                        this.player = player
+                        useController = false
+                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                     }
-                }
-                Spacer(Modifier.height(14.dp))
-                if (loading) {
-                    CircularProgressIndicator(color = Color(0xFF78D5C6))
-                    Spacer(Modifier.height(10.dp))
-                }
-                error?.let {
-                    Text(text = it, color = Color(0xFFFFB199))
-                    Spacer(Modifier.height(10.dp))
-                }
-                if (results.isNotEmpty()) {
-                    Text("Series Results", color = Color.White, style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(8.dp))
-                    LazyColumn(
+                },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black),
+                update = {
+                    it.player = player
+                    it.useController = false
+                },
+            )
+
+            if (resolvedEpisodeUrl == null && !showPlaylist) {
+                Text(
+                    text = "Press Select for playlist",
+                    color = Color(0xFFB8C3CC),
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.align(Alignment.Center),
+                )
+            }
+
+            if (showPlaylist) {
+                Column(
+                    modifier = Modifier
+                        .padding(24.dp)
+                        .width(460.dp)
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xEE101418))
+                        .border(1.dp, Color(0x663A4654), RoundedCornerShape(8.dp))
+                        .padding(18.dp),
+                ) {
+                    Row(
                         modifier = Modifier
-                            .height(170.dp)
                             .fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        itemsIndexed(results) { _, result ->
-                            FocusButton(
-                                text = result.title,
-                                selected = series?.url == result.url,
-                                onClick = { loadSeries(result.url) },
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Web Playlist",
+                                color = Color.White,
+                                style = MaterialTheme.typography.headlineSmall,
                             )
+                            Text(
+                                text = status,
+                                color = Color(0xFFB8C3CC),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        if (resolvedEpisodeUrl != null) {
+                            Button(onClick = { showPlaylist = false }) {
+                                Text("Hide")
+                            }
                         }
                     }
                     Spacer(Modifier.height(14.dp))
-                }
-                Text(
-                    text = series?.title ?: "Episodes",
-                    color = Color.White,
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.height(8.dp))
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    itemsIndexed(series?.episodes.orEmpty()) { index, episode ->
-                        val resume = if (index == progressStore.lastEpisodeIndex()) progressStore.lastPositionMs() else 0L
-                        FocusButton(
-                            text = episode.title,
-                            selected = index == selectedEpisode,
-                            onClick = { playEpisode(index, resume) },
-                        )
-                    }
-                }
-            }
 
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight(),
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(Color.Black),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (resolvedEpisodeUrl == null) {
-                        Text(
-                            text = "Select an episode",
-                            color = Color(0xFFB8C3CC),
-                            style = MaterialTheme.typography.titleLarge,
-                        )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = { playPrevious() },
+                            enabled = selectedEpisode > 0,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("Prev")
+                        }
+                        Button(
+                            onClick = {
+                                if (player.isPlaying) {
+                                    player.pause()
+                                } else {
+                                    player.play()
+                                }
+                            },
+                            enabled = resolvedEpisodeUrl != null,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text(if (isPlaying) "Pause" else "Play")
+                        }
+                        Button(
+                            onClick = { playNext() },
+                            enabled = selectedEpisode < (series?.episodes?.lastIndex ?: 0),
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("Next")
+                        }
                     }
-                    AndroidView(
-                        factory = { PlayerView(it).apply { this.player = player } },
-                        modifier = Modifier.fillMaxSize(),
-                        update = { it.player = player },
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = { loopCurrentEpisode = !loopCurrentEpisode },
+                        enabled = resolvedEpisodeUrl != null,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(if (loopCurrentEpisode) "Mode: Loop episode" else "Mode: Next episode")
+                    }
+                    Spacer(Modifier.height(14.dp))
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedTextField(
+                            value = urlInput,
+                            onValueChange = { urlInput = it },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                            label = { Text("Series URL") },
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
+                            keyboardActions = KeyboardActions(onGo = { openEnteredUrl() }),
+                        )
+                        Button(onClick = { openEnteredUrl() }) {
+                            Text("Open")
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedTextField(
+                            value = query,
+                            onValueChange = { query = it },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                            label = { Text("Search anime") },
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                            keyboardActions = KeyboardActions(onSearch = { search() }),
+                        )
+                        Button(onClick = { search() }) {
+                            Text("Search")
+                        }
+                    }
+                    Spacer(Modifier.height(14.dp))
+                    if (loading) {
+                        CircularProgressIndicator(color = Color(0xFF78D5C6))
+                        Spacer(Modifier.height(10.dp))
+                    }
+                    error?.let {
+                        Text(text = it, color = Color(0xFFFFB199))
+                        Spacer(Modifier.height(10.dp))
+                    }
+                    if (results.isNotEmpty()) {
+                        Text("Series Results", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(8.dp))
+                        LazyColumn(
+                            modifier = Modifier
+                                .height(160.dp)
+                                .fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            itemsIndexed(results) { _, result ->
+                                FocusButton(
+                                    text = result.title,
+                                    selected = series?.url == result.url,
+                                    onClick = { loadSeries(result.url) },
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(14.dp))
+                    }
+                    Text(
+                        text = series?.title ?: "Episodes",
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
                     )
+                    Spacer(Modifier.height(8.dp))
+                    if (series?.episodes.isNullOrEmpty()) {
+                        Text(
+                            text = "No episodes loaded",
+                            color = Color(0xFFB8C3CC),
+                        )
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            itemsIndexed(series?.episodes.orEmpty()) { index, episode ->
+                                val resume = if (index == progressStore.lastEpisodeIndex()) {
+                                    progressStore.lastPositionMs()
+                                } else {
+                                    0L
+                                }
+                                FocusButton(
+                                    text = episode.title,
+                                    selected = index == selectedEpisode,
+                                    onClick = { playEpisode(index, resume) },
+                                )
+                            }
+                        }
+                    }
                 }
+            } else {
+                Text(
+                    text = "Select",
+                    color = Color(0x99FFFFFF),
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(18.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color(0x66000000))
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                )
             }
         }
     }
@@ -370,4 +548,4 @@ private fun FocusButton(
 }
 
 private const val DEFAULT_SERIES_URL = "https://myself-bbs.com/thread-44169-1-1.html"
-
+private val seriesUrlPattern = Regex("""https?://(?:www\.)?myself-bbs\.com/thread-\d+-\d+-\d+\.html""")

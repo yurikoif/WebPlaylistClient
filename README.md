@@ -10,14 +10,34 @@ https://myself-bbs.com/thread-44169-1-1.html
 
 ## What It Does
 
+- Uses a video-first TV design: playback owns the full screen, and every other interaction appears as a floating overlay.
 - Loads the last selected series, or the bundled default sample URL.
 - Parses episode rows from the series page.
 - Lets TV users search the website from inside the app.
+- Lets TV users enter a supported series URL directly and jump to it.
 - Shows matching series thread links as selectable results.
 - Resolves episode player pages into direct playable media URLs where possible.
 - Plays video with AndroidX Media3 / ExoPlayer.
-- Auto-advances when an episode ends.
+- Auto-advances when an episode ends by default.
+- Offers a playback mode toggle to switch from next episode to looping the current episode.
 - Saves the last selected series, episode index, and playback position locally.
+
+## TV Interaction Model
+
+The app is intentionally full-screen-first:
+
+- The video player fills the entire TV screen.
+- Pressing the remote Select/center button while watching opens the floating playlist overlay.
+- Selecting an episode hides the overlay and returns to full-screen video.
+- The overlay contains direct URL entry, search, playlist, previous, play/pause, next, and next/loop mode controls.
+- Back hides the overlay when video is already loaded.
+
+Supported direct URLs currently match the Discuz thread format:
+
+```text
+https://myself-bbs.com/thread-44169-1-1.html
+thread-44169-1-1.html
+```
 
 The app does not attempt to bypass DRM, login, payment, captcha, or other access controls.
 
@@ -114,4 +134,3 @@ For a changed episode page/player structure, update:
 ```text
 app/src/main/java/com/example/webplaylist/resolver/
 ```
-
