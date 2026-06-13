@@ -27,9 +27,11 @@ The app is intentionally full-screen-first:
 - The video player fills the entire TV screen.
 - Pressing remote OK/Select while watching pauses playback, opens floating controls, and focuses play/pause.
 - Pressing directional keys while watching opens floating controls without pausing.
+- Short-pressing Left/Right while watching opens floating controls focused on back/forward 10 seconds.
+- Long-pressing Left/Right while watching seeks backward/forward by 30 seconds per repeat.
 - Selecting an episode hides the overlay and returns to full-screen video.
 - The URL panel floats above the transport controls.
-- Previous, play/pause, and next float in the center of the screen with drawn media icons.
+- Previous episode, back 10 seconds, play/pause, forward 10 seconds, and next episode float in the center of the screen with drawn media icons.
 - The playlist floats at the bottom as a horizontal episode rail.
 - From the transport controls, Up focuses the URL panel and Down focuses the current episode in the playlist rail.
 - Back hides the overlay when video is already loaded.

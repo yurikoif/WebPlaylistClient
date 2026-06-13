@@ -80,6 +80,7 @@ import com.example.webplaylist.data.PlaylistRepository
 import com.example.webplaylist.parser.MyselfBbsEpisodeListParser
 import com.example.webplaylist.resolver.HtmlMediaUrlResolver
 import com.example.webplaylist.resolver.VpxWebSocketMediaUrlResolver
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
@@ -125,10 +126,16 @@ private fun WebPlaylistApp() {
     var loopCurrentEpisode by remember { mutableStateOf(false) }
     var pendingAutoPlay by remember { mutableStateOf<Pair<Int, Long>?>(null) }
     var focusPlayWhenShown by remember { mutableStateOf(false) }
+    var focusBack10WhenShown by remember { mutableStateOf(false) }
+    var focusForward10WhenShown by remember { mutableStateOf(false) }
     var focusUrlWhenShown by remember { mutableStateOf(false) }
     var focusEpisodeWhenShown by remember { mutableStateOf(false) }
+    var seekJob by remember { mutableStateOf<Job?>(null) }
+    var leftRightPressHandledAsSeek by remember { mutableStateOf(false) }
     val rootFocusRequester = remember { FocusRequester() }
     val playPauseFocusRequester = remember { FocusRequester() }
+    val back10FocusRequester = remember { FocusRequester() }
+    val forward10FocusRequester = remember { FocusRequester() }
     val currentEpisodeFocusRequester = remember { FocusRequester() }
     val urlFocusRequester = remember { FocusRequester() }
 
@@ -321,17 +328,32 @@ private fun WebPlaylistApp() {
         when (focusTarget) {
             OverlayFocusTarget.Url -> focusUrlWhenShown = true
             OverlayFocusTarget.Play -> focusPlayWhenShown = true
+            OverlayFocusTarget.Back10 -> focusBack10WhenShown = true
+            OverlayFocusTarget.Forward10 -> focusForward10WhenShown = true
             OverlayFocusTarget.Episode -> focusEpisodeWhenShown = true
         }
         showPlaylist = true
     }
 
-    LaunchedEffect(showPlaylist, focusPlayWhenShown, focusUrlWhenShown, focusEpisodeWhenShown) {
+    LaunchedEffect(
+        showPlaylist,
+        focusPlayWhenShown,
+        focusBack10WhenShown,
+        focusForward10WhenShown,
+        focusUrlWhenShown,
+        focusEpisodeWhenShown,
+    ) {
         if (!showPlaylist) {
             rootFocusRequester.requestFocus()
         } else if (focusPlayWhenShown) {
             playPauseFocusRequester.requestFocus()
             focusPlayWhenShown = false
+        } else if (focusBack10WhenShown) {
+            back10FocusRequester.requestFocus()
+            focusBack10WhenShown = false
+        } else if (focusForward10WhenShown) {
+            forward10FocusRequester.requestFocus()
+            focusForward10WhenShown = false
         } else if (focusUrlWhenShown) {
             urlFocusRequester.requestFocus()
             focusUrlWhenShown = false
@@ -355,12 +377,60 @@ private fun WebPlaylistApp() {
         if (next <= (series?.episodes?.lastIndex ?: -1)) playEpisode(next)
     }
 
+    fun seekBy(deltaMs: Long) {
+        if (resolvedEpisodeUrl == null) return
+        val duration = player.duration.takeIf { it > 0L } ?: Long.MAX_VALUE
+        val target = (player.currentPosition + deltaMs).coerceIn(0L, duration)
+        player.seekTo(target)
+        progressStore.saveProgress(selectedEpisode, target)
+        lastSavedPosition = target
+    }
+
     Surface(
         modifier = Modifier
             .fillMaxSize()
             .focusRequester(rootFocusRequester)
             .focusable()
             .onPreviewKeyEvent { event ->
+                if (
+                    !showPlaylist &&
+                    (event.key == Key.DirectionLeft || event.key == Key.DirectionRight)
+                ) {
+                    val delta = if (event.key == Key.DirectionLeft) -LONG_PRESS_SEEK_STEP_MS else LONG_PRESS_SEEK_STEP_MS
+                    when (event.type) {
+                        KeyEventType.KeyDown -> {
+                            if (seekJob == null) {
+                                leftRightPressHandledAsSeek = false
+                                seekJob = scope.launch {
+                                    delay(LONG_PRESS_SEEK_MS)
+                                    while (true) {
+                                        seekBy(delta)
+                                        leftRightPressHandledAsSeek = true
+                                        delay(REPEAT_SEEK_MS)
+                                    }
+                                }
+                            }
+                            return@onPreviewKeyEvent true
+                        }
+                        KeyEventType.KeyUp -> {
+                            val wasSeek = leftRightPressHandledAsSeek
+                            seekJob?.cancel()
+                            seekJob = null
+                            leftRightPressHandledAsSeek = false
+                            if (!wasSeek) {
+                                val focusTarget = if (event.key == Key.DirectionLeft) {
+                                    OverlayFocusTarget.Back10
+                                } else {
+                                    OverlayFocusTarget.Forward10
+                                }
+                                showControlsWithoutPause(focusTarget)
+                            }
+                            return@onPreviewKeyEvent true
+                        }
+                        else -> return@onPreviewKeyEvent false
+                    }
+                }
+
                 if (!showPlaylist && event.type == KeyEventType.KeyUp) {
                     when (event.key) {
                         Key.DirectionCenter,
@@ -377,9 +447,12 @@ private fun WebPlaylistApp() {
                             showControlsWithoutPause(OverlayFocusTarget.Episode)
                             true
                         }
-                        Key.DirectionLeft,
+                        Key.DirectionLeft -> {
+                            showControlsWithoutPause(OverlayFocusTarget.Back10)
+                            true
+                        }
                         Key.DirectionRight -> {
-                            showControlsWithoutPause(OverlayFocusTarget.Play)
+                            showControlsWithoutPause(OverlayFocusTarget.Forward10)
                             true
                         }
                         else -> false
@@ -513,6 +586,12 @@ private fun WebPlaylistApp() {
                         onClick = { playPrevious() },
                     )
                     TransportButton(
+                        icon = TransportIcon.Back10,
+                        enabled = resolvedEpisodeUrl != null,
+                        modifier = Modifier.focusRequester(back10FocusRequester),
+                        onClick = { seekBy(-SEEK_STEP_MS) },
+                    )
+                    TransportButton(
                         icon = if (isPlaying) TransportIcon.Pause else TransportIcon.Play,
                         enabled = resolvedEpisodeUrl != null,
                         modifier = Modifier.focusRequester(playPauseFocusRequester),
@@ -523,6 +602,12 @@ private fun WebPlaylistApp() {
                                 player.play()
                             }
                         },
+                    )
+                    TransportButton(
+                        icon = TransportIcon.Forward10,
+                        enabled = resolvedEpisodeUrl != null,
+                        modifier = Modifier.focusRequester(forward10FocusRequester),
+                        onClick = { seekBy(SEEK_STEP_MS) },
                     )
                     TransportButton(
                         icon = TransportIcon.Next,
@@ -638,14 +723,18 @@ private fun TransportButton(
 
 private enum class TransportIcon {
     Previous,
+    Back10,
     Play,
     Pause,
+    Forward10,
     Next,
 }
 
 private enum class OverlayFocusTarget {
     Url,
     Play,
+    Back10,
+    Forward10,
     Episode,
 }
 
@@ -655,6 +744,51 @@ private fun TransportGlyph(
     enabled: Boolean,
 ) {
     val glyphColor = if (enabled) Color.White else Color(0x66FFFFFF)
+    if (icon == TransportIcon.Back10 || icon == TransportIcon.Forward10) {
+        Box(
+            modifier = Modifier.size(38.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val w = size.width
+                val h = size.height
+                if (icon == TransportIcon.Back10) {
+                    drawCircle(
+                        glyphColor,
+                        radius = w * 0.08f,
+                        center = androidx.compose.ui.geometry.Offset(w * 0.18f, h * 0.5f),
+                    )
+                    val path = Path().apply {
+                        moveTo(w * 0.44f, h * 0.26f)
+                        lineTo(w * 0.44f, h * 0.74f)
+                        lineTo(w * 0.16f, h * 0.5f)
+                        close()
+                    }
+                    drawPath(path, glyphColor)
+                } else {
+                    val path = Path().apply {
+                        moveTo(w * 0.56f, h * 0.26f)
+                        lineTo(w * 0.56f, h * 0.74f)
+                        lineTo(w * 0.84f, h * 0.5f)
+                        close()
+                    }
+                    drawPath(path, glyphColor)
+                    drawCircle(
+                        glyphColor,
+                        radius = w * 0.08f,
+                        center = androidx.compose.ui.geometry.Offset(w * 0.82f, h * 0.5f),
+                    )
+                }
+            }
+            Text(
+                text = "10",
+                color = glyphColor,
+                style = MaterialTheme.typography.labelMedium,
+            )
+        }
+        return
+    }
+
     Canvas(modifier = Modifier.size(34.dp)) {
         val w = size.width
         val h = size.height
@@ -672,6 +806,8 @@ private fun TransportGlyph(
                 drawRoundRect(glyphColor, topLeft = androidx.compose.ui.geometry.Offset(w * 0.26f, h * 0.22f), size = androidx.compose.ui.geometry.Size(w * 0.16f, h * 0.56f))
                 drawRoundRect(glyphColor, topLeft = androidx.compose.ui.geometry.Offset(w * 0.58f, h * 0.22f), size = androidx.compose.ui.geometry.Size(w * 0.16f, h * 0.56f))
             }
+            TransportIcon.Back10,
+            TransportIcon.Forward10 -> Unit
             TransportIcon.Previous -> {
                 drawRoundRect(glyphColor, topLeft = androidx.compose.ui.geometry.Offset(w * 0.18f, h * 0.22f), size = androidx.compose.ui.geometry.Size(w * 0.12f, h * 0.56f))
                 val path = Path().apply {
@@ -741,4 +877,8 @@ private fun translucentButtonColors() = ButtonDefaults.buttonColors(
 
 private const val DEFAULT_SERIES_URL = "https://myself-bbs.com/thread-44169-1-1.html"
 private const val USER_AGENT = "Mozilla/5.0"
+private const val SEEK_STEP_MS = 10_000L
+private const val LONG_PRESS_SEEK_STEP_MS = 30_000L
+private const val LONG_PRESS_SEEK_MS = 450L
+private const val REPEAT_SEEK_MS = 250L
 private val seriesUrlPattern = Regex("""https?://(?:www\.)?myself-bbs\.com/thread-\d+-\d+-\d+\.html""")
