@@ -7,7 +7,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -30,6 +29,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -49,6 +49,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -56,6 +57,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -451,8 +453,17 @@ private fun WebPlaylistApp() {
         }
     }
 
-    BackHandler(enabled = showPlaylist && resolvedEpisodeUrl != null) {
-        hideControls()
+    fun exitApp() {
+        saveCurrentProgress()
+        (context as? Activity)?.finish()
+    }
+
+    BackHandler(enabled = resolvedEpisodeUrl != null) {
+        if (showPlaylist) {
+            exitApp()
+        } else {
+            showControlsWithoutPause(OverlayFocusTarget.Play)
+        }
     }
 
     fun playPrevious() {
@@ -504,9 +515,19 @@ private fun WebPlaylistApp() {
             .focusRequester(rootFocusRequester)
             .focusable()
             .onPreviewKeyEvent { event ->
-                if (showPlaylist && event.type == KeyEventType.KeyUp && event.key == Key.Back) {
-                    hideControls()
-                    return@onPreviewKeyEvent true
+                if (event.key == Key.Back && resolvedEpisodeUrl != null) {
+                    when (event.type) {
+                        KeyEventType.KeyDown -> return@onPreviewKeyEvent true
+                        KeyEventType.KeyUp -> {
+                            if (showPlaylist) {
+                                exitApp()
+                            } else {
+                                showControlsWithoutPause(OverlayFocusTarget.Play)
+                            }
+                            return@onPreviewKeyEvent true
+                        }
+                        else -> return@onPreviewKeyEvent false
+                    }
                 }
 
                 if (showPlaylist && event.type == KeyEventType.KeyUp) {
@@ -616,6 +637,23 @@ private fun WebPlaylistApp() {
             }
 
             if (showPlaylist) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                colorStops = arrayOf(
+                                    0.00f to Color(0xB0000000),
+                                    0.18f to Color(0x66000000),
+                                    0.42f to Color(0x18000000),
+                                    0.58f to Color(0x18000000),
+                                    0.82f to Color(0x70000000),
+                                    1.00f to Color(0xC0000000),
+                                ),
+                            ),
+                        ),
+                )
+
                 Column(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
@@ -623,7 +661,6 @@ private fun WebPlaylistApp() {
                         .width(860.dp)
                         .clip(RoundedCornerShape(8.dp))
                         .background(PANEL_BACKGROUND)
-                        .border(1.dp, PANEL_BORDER, RoundedCornerShape(8.dp))
                         .padding(12.dp),
                 ) {
                     Row(
@@ -658,6 +695,17 @@ private fun WebPlaylistApp() {
                                 },
                             singleLine = true,
                             label = { Text("Series URL") },
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White,
+                                cursorColor = Color.White,
+                                focusedLabelColor = Color(0xFFE6EEF5),
+                                unfocusedLabelColor = Color(0xBFE6EEF5),
+                                focusedBorderColor = Color(0xCCFFFFFF),
+                                unfocusedBorderColor = Color(0x66FFFFFF),
+                                focusedContainerColor = Color(0x22FFFFFF),
+                                unfocusedContainerColor = Color(0x18FFFFFF),
+                            ),
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
                             keyboardActions = KeyboardActions(onGo = { openEnteredUrl() }),
                         )
@@ -666,14 +714,6 @@ private fun WebPlaylistApp() {
                             colors = translucentButtonColors(),
                         ) {
                             Text("Open")
-                        }
-                        if (resolvedEpisodeUrl != null) {
-                            Button(
-                                onClick = { showPlaylist = false },
-                                colors = translucentButtonColors(),
-                            ) {
-                                Text("Hide")
-                            }
                         }
                     }
                     Spacer(Modifier.height(6.dp))
@@ -870,7 +910,6 @@ private fun WebPlaylistApp() {
                         .padding(horizontal = 24.dp, vertical = 12.dp)
                         .clip(RoundedCornerShape(8.dp))
                         .background(PANEL_BACKGROUND)
-                        .border(1.dp, PANEL_BORDER, RoundedCornerShape(8.dp))
                         .padding(10.dp),
                 ) {
                     PlaybackProgressPanel(
@@ -889,6 +928,7 @@ private fun WebPlaylistApp() {
                                 text = series?.title ?: "Episodes",
                                 color = Color.White,
                                 style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
@@ -1025,5 +1065,4 @@ private const val LONG_PRESS_START_MS = 500L
 private const val LONG_PRESS_SEEK_REPEAT_MS = 700L
 private const val OVERLAY_AUTO_HIDE_MS = 10_000L
 private const val PROGRESS_SAVE_INTERVAL_MS = 5_000L
-private val PANEL_BACKGROUND = Color(0xC8242B33)
-private val PANEL_BORDER = Color(0x88D7E0EA)
+private val PANEL_BACKGROUND = Color(0xA8242B33)
