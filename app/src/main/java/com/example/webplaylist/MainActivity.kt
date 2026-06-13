@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
@@ -49,6 +50,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -59,6 +61,9 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
@@ -72,9 +77,7 @@ import androidx.media3.ui.PlayerView
 import com.example.webplaylist.data.LoadedSeries
 import com.example.webplaylist.data.PlaybackProgressStore
 import com.example.webplaylist.data.PlaylistRepository
-import com.example.webplaylist.model.SeriesSearchResult
 import com.example.webplaylist.parser.MyselfBbsEpisodeListParser
-import com.example.webplaylist.parser.MyselfBbsSearchParser
 import com.example.webplaylist.resolver.HtmlMediaUrlResolver
 import com.example.webplaylist.resolver.VpxWebSocketMediaUrlResolver
 import kotlinx.coroutines.delay
@@ -95,6 +98,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun WebPlaylistApp() {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     val progressStore = remember { PlaybackProgressStore(context) }
     val repository = remember {
@@ -103,16 +107,13 @@ private fun WebPlaylistApp() {
         PlaylistRepository(
             client = client,
             episodeParser = MyselfBbsEpisodeListParser(),
-            searchParser = MyselfBbsSearchParser(),
             resolver = HtmlMediaUrlResolver(client, vpxResolver),
         )
     }
     val player = remember { ExoPlayer.Builder(context).build() }
 
-    var query by remember { mutableStateOf("") }
     var urlInput by remember { mutableStateOf(DEFAULT_SERIES_URL) }
     var series by remember { mutableStateOf<LoadedSeries?>(null) }
-    var results by remember { mutableStateOf<List<SeriesSearchResult>>(emptyList()) }
     var selectedEpisode by remember { mutableIntStateOf(progressStore.lastEpisodeIndex()) }
     var status by remember { mutableStateOf("Loading sample series") }
     var error by remember { mutableStateOf<String?>(null) }
@@ -124,6 +125,8 @@ private fun WebPlaylistApp() {
     var loopCurrentEpisode by remember { mutableStateOf(false) }
     var pendingAutoPlay by remember { mutableStateOf<Pair<Int, Long>?>(null) }
     var focusPlayWhenShown by remember { mutableStateOf(false) }
+    var focusUrlWhenShown by remember { mutableStateOf(false) }
+    var focusEpisodeWhenShown by remember { mutableStateOf(false) }
     val rootFocusRequester = remember { FocusRequester() }
     val playPauseFocusRequester = remember { FocusRequester() }
     val currentEpisodeFocusRequester = remember { FocusRequester() }
@@ -161,27 +164,6 @@ private fun WebPlaylistApp() {
         }
     }
 
-    fun search() {
-        val term = query.trim()
-        if (term.isBlank()) return
-        scope.launch {
-            loading = true
-            error = null
-            status = "Searching"
-            runCatching { repository.searchSeries(term) }
-                .onSuccess {
-                    results = it
-                    status = "${it.size} results"
-                    if (it.isEmpty()) error = "No matching series found"
-                }
-                .onFailure {
-                    error = it.message ?: "Search failed"
-                    status = "Search failed"
-                }
-            loading = false
-        }
-    }
-
     fun openEnteredUrl() {
         val raw = urlInput.trim()
         if (raw.isBlank()) return
@@ -207,6 +189,7 @@ private fun WebPlaylistApp() {
             loading = true
             error = null
             selectedEpisode = index
+            progressStore.saveProgress(index, resumePositionMs)
             status = "Resolving ${episode.title}"
             runCatching { repository.resolveEpisode(episode, currentSeries.url) }
                 .onSuccess { mediaUrl ->
@@ -279,6 +262,24 @@ private fun WebPlaylistApp() {
         }
     }
 
+    fun saveCurrentProgress() {
+        series?.url?.let { progressStore.saveSeries(it) }
+        progressStore.saveProgress(selectedEpisode, player.currentPosition.coerceAtLeast(0L))
+    }
+
+    DisposableEffect(lifecycleOwner, series?.url, selectedEpisode) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
+                saveCurrentProgress()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            saveCurrentProgress()
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(value: Boolean) {
@@ -316,12 +317,27 @@ private fun WebPlaylistApp() {
         showPlaylist = true
     }
 
-    LaunchedEffect(showPlaylist, focusPlayWhenShown) {
+    fun showControlsWithoutPause(focusTarget: OverlayFocusTarget) {
+        when (focusTarget) {
+            OverlayFocusTarget.Url -> focusUrlWhenShown = true
+            OverlayFocusTarget.Play -> focusPlayWhenShown = true
+            OverlayFocusTarget.Episode -> focusEpisodeWhenShown = true
+        }
+        showPlaylist = true
+    }
+
+    LaunchedEffect(showPlaylist, focusPlayWhenShown, focusUrlWhenShown, focusEpisodeWhenShown) {
         if (!showPlaylist) {
             rootFocusRequester.requestFocus()
         } else if (focusPlayWhenShown) {
             playPauseFocusRequester.requestFocus()
             focusPlayWhenShown = false
+        } else if (focusUrlWhenShown) {
+            urlFocusRequester.requestFocus()
+            focusUrlWhenShown = false
+        } else if (focusEpisodeWhenShown) {
+            currentEpisodeFocusRequester.requestFocus()
+            focusEpisodeWhenShown = false
         }
     }
 
@@ -345,18 +361,29 @@ private fun WebPlaylistApp() {
             .focusRequester(rootFocusRequester)
             .focusable()
             .onPreviewKeyEvent { event ->
-                if (
-                    !showPlaylist &&
-                    event.type == KeyEventType.KeyUp &&
-                    (
-                        event.key == Key.DirectionCenter ||
-                            event.key == Key.Enter ||
-                            event.key == Key.NumPadEnter ||
-                            event.key == Key.DirectionUp
-                        )
-                ) {
-                    showControlsAndPause()
-                    true
+                if (!showPlaylist && event.type == KeyEventType.KeyUp) {
+                    when (event.key) {
+                        Key.DirectionCenter,
+                        Key.Enter,
+                        Key.NumPadEnter -> {
+                            showControlsAndPause()
+                            true
+                        }
+                        Key.DirectionUp -> {
+                            showControlsWithoutPause(OverlayFocusTarget.Url)
+                            true
+                        }
+                        Key.DirectionDown -> {
+                            showControlsWithoutPause(OverlayFocusTarget.Episode)
+                            true
+                        }
+                        Key.DirectionLeft,
+                        Key.DirectionRight -> {
+                            showControlsWithoutPause(OverlayFocusTarget.Play)
+                            true
+                        }
+                        else -> false
+                    }
                 } else {
                     false
                 }
@@ -450,23 +477,6 @@ private fun WebPlaylistApp() {
                         }
                     }
                     Spacer(Modifier.height(6.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        OutlinedTextField(
-                            value = query,
-                            onValueChange = { query = it },
-                            modifier = Modifier.weight(1f),
-                            singleLine = true,
-                            label = { Text("Search anime") },
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                            keyboardActions = KeyboardActions(onSearch = { search() }),
-                        )
-                        Button(
-                            onClick = { search() },
-                            colors = translucentButtonColors(),
-                        ) {
-                            Text("Search")
-                        }
-                    }
                     if (loading) {
                         Spacer(Modifier.height(6.dp))
                         CircularProgressIndicator(color = Color.White)
@@ -474,25 +484,6 @@ private fun WebPlaylistApp() {
                     error?.let {
                         Spacer(Modifier.height(6.dp))
                         Text(text = it, color = Color(0xFFFFB199))
-                    }
-                    if (results.isNotEmpty()) {
-                        Spacer(Modifier.height(6.dp))
-                        Text("Series Results", color = Color.White, style = MaterialTheme.typography.titleMedium)
-                        Spacer(Modifier.height(6.dp))
-                        LazyRow(
-                            modifier = Modifier
-                                .fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            itemsIndexed(results) { _, result ->
-                                EpisodeRailButton(
-                                    text = result.title,
-                                    selected = series?.url == result.url,
-                                    modifier = Modifier.width(240.dp),
-                                    onClick = { loadSeries(result.url) },
-                                )
-                            }
-                        }
                     }
                 }
 
@@ -517,12 +508,12 @@ private fun WebPlaylistApp() {
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     TransportButton(
-                        label = "|<",
+                        icon = TransportIcon.Previous,
                         enabled = selectedEpisode > 0,
                         onClick = { playPrevious() },
                     )
                     TransportButton(
-                        label = if (isPlaying) "||" else ">",
+                        icon = if (isPlaying) TransportIcon.Pause else TransportIcon.Play,
                         enabled = resolvedEpisodeUrl != null,
                         modifier = Modifier.focusRequester(playPauseFocusRequester),
                         onClick = {
@@ -534,7 +525,7 @@ private fun WebPlaylistApp() {
                         },
                     )
                     TransportButton(
-                        label = ">|",
+                        icon = TransportIcon.Next,
                         enabled = selectedEpisode < (series?.episodes?.lastIndex ?: 0),
                         onClick = { playNext() },
                     )
@@ -616,7 +607,7 @@ private fun WebPlaylistApp() {
 
 @Composable
 private fun TransportButton(
-    label: String,
+    icon: TransportIcon,
     enabled: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -626,7 +617,7 @@ private fun TransportButton(
         onClick = onClick,
         enabled = enabled,
         modifier = modifier
-            .size(64.dp)
+            .size(78.dp)
             .onFocusChanged { focused = it.isFocused }
             .border(
                 width = if (focused) 3.dp else 1.dp,
@@ -641,10 +632,67 @@ private fun TransportButton(
             disabledContentColor = Color(0x66FFFFFF),
         ),
     ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.titleLarge,
-        )
+        TransportGlyph(icon = icon, enabled = enabled)
+    }
+}
+
+private enum class TransportIcon {
+    Previous,
+    Play,
+    Pause,
+    Next,
+}
+
+private enum class OverlayFocusTarget {
+    Url,
+    Play,
+    Episode,
+}
+
+@Composable
+private fun TransportGlyph(
+    icon: TransportIcon,
+    enabled: Boolean,
+) {
+    val glyphColor = if (enabled) Color.White else Color(0x66FFFFFF)
+    Canvas(modifier = Modifier.size(34.dp)) {
+        val w = size.width
+        val h = size.height
+        when (icon) {
+            TransportIcon.Play -> {
+                val path = Path().apply {
+                    moveTo(w * 0.34f, h * 0.22f)
+                    lineTo(w * 0.34f, h * 0.78f)
+                    lineTo(w * 0.78f, h * 0.5f)
+                    close()
+                }
+                drawPath(path, glyphColor)
+            }
+            TransportIcon.Pause -> {
+                drawRoundRect(glyphColor, topLeft = androidx.compose.ui.geometry.Offset(w * 0.26f, h * 0.22f), size = androidx.compose.ui.geometry.Size(w * 0.16f, h * 0.56f))
+                drawRoundRect(glyphColor, topLeft = androidx.compose.ui.geometry.Offset(w * 0.58f, h * 0.22f), size = androidx.compose.ui.geometry.Size(w * 0.16f, h * 0.56f))
+            }
+            TransportIcon.Previous -> {
+                drawRoundRect(glyphColor, topLeft = androidx.compose.ui.geometry.Offset(w * 0.18f, h * 0.22f), size = androidx.compose.ui.geometry.Size(w * 0.12f, h * 0.56f))
+                val path = Path().apply {
+                    moveTo(w * 0.78f, h * 0.2f)
+                    lineTo(w * 0.78f, h * 0.8f)
+                    lineTo(w * 0.32f, h * 0.5f)
+                    close()
+                }
+                drawPath(path, glyphColor)
+            }
+            TransportIcon.Next -> {
+                val path = Path().apply {
+                    moveTo(w * 0.22f, h * 0.2f)
+                    lineTo(w * 0.22f, h * 0.8f)
+                    lineTo(w * 0.68f, h * 0.5f)
+                    close()
+                }
+                drawPath(path, glyphColor)
+                drawRoundRect(glyphColor, topLeft = androidx.compose.ui.geometry.Offset(w * 0.72f, h * 0.22f), size = androidx.compose.ui.geometry.Size(w * 0.12f, h * 0.56f))
+            }
+        }
     }
 }
 

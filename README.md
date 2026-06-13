@@ -13,14 +13,12 @@ https://myself-bbs.com/thread-44169-1-1.html
 - Uses a video-first TV design: playback owns the full screen, and every other interaction appears as a floating overlay.
 - Loads the last selected series, or the bundled default sample URL.
 - Parses episode rows from the series page.
-- Lets TV users search the website from inside the app.
 - Lets TV users enter a supported series URL directly and jump to it.
-- Shows matching series thread links as selectable results.
 - Resolves episode player pages into direct playable media URLs where possible.
 - Plays video with AndroidX Media3 / ExoPlayer.
 - Auto-advances when an episode ends by default.
 - Offers a playback mode toggle to switch from next episode to looping the current episode.
-- Saves the last selected series, episode index, and playback position locally.
+- Saves the last selected series URL, episode index, and playback timestamp locally.
 
 ## TV Interaction Model
 
@@ -28,10 +26,10 @@ The app is intentionally full-screen-first:
 
 - The video player fills the entire TV screen.
 - Pressing remote OK/Select while watching pauses playback, opens floating controls, and focuses play/pause.
-- Pressing Up while watching also pauses playback and opens the floating controls.
+- Pressing directional keys while watching opens floating controls without pausing.
 - Selecting an episode hides the overlay and returns to full-screen video.
-- The URL/search panel floats above the transport controls.
-- Previous, play/pause, and next float in the center of the screen with YouTube-style transport symbols.
+- The URL panel floats above the transport controls.
+- Previous, play/pause, and next float in the center of the screen with drawn media icons.
 - The playlist floats at the bottom as a horizontal episode rail.
 - From the transport controls, Up focuses the URL panel and Down focuses the current episode in the playlist rail.
 - Back hides the overlay when video is already loaded.
@@ -43,35 +41,9 @@ https://myself-bbs.com/thread-44169-1-1.html
 thread-44169-1-1.html
 ```
 
+Progress is saved periodically and when Android sends pause/stop lifecycle events, so reopening the app resumes the remembered series, episode, and timestamp.
+
 The app does not attempt to bypass DRM, login, payment, captcha, or other access controls.
-
-## Website Search
-
-The app mirrors the website header search form. It first loads:
-
-```text
-https://myself-bbs.com/portal.php
-```
-
-Then it submits a title search to:
-
-```text
-https://myself-bbs.com/search.php?searchsubmit=yes
-```
-
-Important form fields:
-
-```text
-mod=forum
-srchtype=title
-srhfid=0
-srhlocality=portal::index
-srchtxt=<query>
-searchsubmit=true
-formhash=<value from portal page, when present>
-```
-
-Search results are parsed by collecting unique `thread-...html` links from the returned page.
 
 ## Episode Parsing
 
@@ -101,7 +73,7 @@ Change `DEFAULT_SERIES_URL` in:
 app/src/main/java/com/example/webplaylist/MainActivity.kt
 ```
 
-The in-app search can also select another series at runtime, and the selected URL is remembered in `SharedPreferences`.
+The URL overlay can open another supported series at runtime, and the selected URL is remembered in `SharedPreferences`.
 
 ## Build
 

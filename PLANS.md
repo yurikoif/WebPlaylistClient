@@ -216,7 +216,7 @@ OkHttp includes WebSocket support.
    - Remote-friendly selection.
    - Loading/error states.
    - Resume last watched episode.
-   - Website-backed anime search from the app.
+   - Direct supported series URL entry from the app.
 
 6. Implement playback. Done in current pass.
    - Media3 ExoPlayer.
