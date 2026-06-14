@@ -243,6 +243,7 @@ private fun WebPlaylistApp() {
         }
         scope.launch {
             urlInput = normalized
+            showLanQrCode = false
             showPlaylist = true
             loadSeries(normalized)
         }
@@ -274,6 +275,7 @@ private fun WebPlaylistApp() {
                     if (currentSeries.siteId == MYSELF_BBS_SITE_ID) {
                         requestHeaders["Origin"] = "https://v.myself-bbs.com"
                     }
+                    requestHeaders.putAll(resolvedMedia.requestHeaders)
                     val dataSourceFactory = DefaultHttpDataSource.Factory()
                         .setUserAgent(USER_AGENT)
                         .setDefaultRequestProperties(requestHeaders)
@@ -493,8 +495,8 @@ private fun WebPlaylistApp() {
         }
     }
 
-    LaunchedEffect(showPlaylist, overlayActivityTick, resolvedEpisodeUrl, urlInputFocused, isPlaying) {
-        if (showPlaylist && resolvedEpisodeUrl != null && isPlaying && !urlInputFocused) {
+    LaunchedEffect(showPlaylist, overlayActivityTick, resolvedEpisodeUrl, urlInputFocused, showLanQrCode, isPlaying) {
+        if (showPlaylist && resolvedEpisodeUrl != null && isPlaying && !urlInputFocused && !showLanQrCode) {
             delay(OVERLAY_AUTO_HIDE_MS)
             hideControls()
         }
@@ -1179,7 +1181,7 @@ private const val NNYY_SITE_ID = "nnyy"
 private const val DEFAULT_SERIES_URL = "https://myself-bbs.com/thread-44169-1-1.html"
 private const val USER_AGENT = "Mozilla/5.0"
 private const val SEEK_STEP_MS = 10_000L
-private const val LONG_PRESS_SEEK_STEP_MS = 30_000L
+private const val LONG_PRESS_SEEK_STEP_MS = 60_000L
 private const val LONG_PRESS_START_MS = 500L
 private const val LONG_PRESS_SEEK_REPEAT_MS = 700L
 private const val OVERLAY_AUTO_HIDE_MS = 10_000L

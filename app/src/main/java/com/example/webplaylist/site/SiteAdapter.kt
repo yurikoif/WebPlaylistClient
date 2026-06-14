@@ -20,4 +20,5 @@ interface SiteAdapter {
 data class ResolvedMedia(
     val url: String,
     val sourceIndex: Int,
+    val requestHeaders: Map<String, String> = emptyMap(),
 )

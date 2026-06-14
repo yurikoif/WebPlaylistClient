@@ -140,9 +140,9 @@ class LanControlServer(
                   color-scheme: light dark;
                   --bg: #101418;
                   --panel: #ffffff;
+                  --field: #e8eef5;
                   --text: #111827;
                   --muted: #64748b;
-                  --line: #d7dee8;
                   --accent: #0f766e;
                   --accent-dark: #115e59;
                 }
@@ -160,10 +160,8 @@ class LanControlServer(
                 main {
                   width: min(100%, 560px);
                   background: var(--panel);
-                  border: 1px solid var(--line);
                   border-radius: 8px;
-                  padding: 18px;
-                  box-shadow: 0 18px 60px rgba(15, 23, 42, 0.13);
+                  padding: 16px;
                 }
                 h1 {
                   margin: 0 0 14px;
@@ -173,27 +171,30 @@ class LanControlServer(
                 }
                 form {
                   display: flex;
-                  gap: 10px;
+                  gap: 8px;
                 }
                 input {
                   min-width: 0;
                   flex: 1;
-                  height: 48px;
-                  border: 1px solid var(--line);
+                  height: 56px;
+                  border: 0;
                   border-radius: 6px;
-                  padding: 0 14px;
+                  padding: 0 16px;
                   font: inherit;
+                  font-size: 16px;
+                  background: var(--field);
+                  color: var(--text);
                   outline: none;
                 }
                 input:focus {
-                  border-color: var(--accent);
                   box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.14);
                 }
                 button {
-                  height: 48px;
+                  flex: 0 0 92px;
+                  height: 56px;
                   border: 0;
                   border-radius: 6px;
-                  padding: 0 18px;
+                  padding: 0 14px;
                   font: inherit;
                   font-weight: 700;
                   color: white;
@@ -208,16 +209,21 @@ class LanControlServer(
                 }
                 @media (max-width: 520px) {
                   main { padding: 14px; }
+                }
+                @media (max-width: 360px) {
                   form { flex-direction: column; }
-                  button { width: 100%; }
+                  button {
+                    width: 100%;
+                    flex-basis: auto;
+                  }
                 }
                 @media (prefers-color-scheme: dark) {
                   body { background: var(--bg); }
                   main {
                     --panel: #171d23;
+                    --field: #26313b;
                     --text: #f8fafc;
                     --muted: #94a3b8;
-                    --line: #334155;
                     box-shadow: none;
                   }
                   input {

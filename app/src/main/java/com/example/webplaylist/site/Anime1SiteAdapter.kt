@@ -103,7 +103,18 @@ class Anime1SiteAdapter(
             val body = response.body?.string().orEmpty()
             val mediaUrl = JSONObject(body).opt("s").toMediaUrl()
             if (mediaUrl.isBlank()) error("No playable Anime1 source found")
-            ResolvedMedia(mediaUrl, sourceStartIndex)
+            ResolvedMedia(
+                url = mediaUrl,
+                sourceIndex = sourceStartIndex,
+                requestHeaders = buildMap {
+                    put("Referer", source.pageUrl)
+                    put("Origin", "https://anime1.me")
+                    response.headers("Set-Cookie")
+                        .toCookieHeader()
+                        .takeIf { it.isNotBlank() }
+                        ?.let { put("Cookie", it) }
+                },
+            )
         }
     }
 
@@ -126,6 +137,12 @@ class Anime1SiteAdapter(
             if (url.isNotBlank()) return url
         }
         return ""
+    }
+
+    private fun List<String>.toCookieHeader(): String {
+        return mapNotNull { cookie ->
+            cookie.substringBefore(";").trim().takeIf { it.contains("=") }
+        }.joinToString("; ")
     }
 
     private companion object {
