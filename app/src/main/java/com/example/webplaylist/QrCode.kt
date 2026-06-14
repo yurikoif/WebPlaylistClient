@@ -24,12 +24,12 @@ fun LanAddressQrCode(
     val modules = remember(address) { QrCodeEncoder.encodeVersion2Low(address) }
     Box(
         modifier = modifier
-            .size(174.dp)
+            .size(224.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(Color.White),
         contentAlignment = Alignment.Center,
     ) {
-        Canvas(modifier = Modifier.size(148.dp)) {
+        Canvas(modifier = Modifier.size(168.dp)) {
             val moduleSize = size.minDimension / modules.size
             modules.forEachIndexed { y, row ->
                 row.forEachIndexed { x, filled ->
