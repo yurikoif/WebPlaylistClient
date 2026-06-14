@@ -80,6 +80,7 @@ import com.example.webplaylist.data.SavedSeries
 import com.example.webplaylist.parser.MyselfBbsEpisodeListParser
 import com.example.webplaylist.resolver.HtmlMediaUrlResolver
 import com.example.webplaylist.resolver.VpxWebSocketMediaUrlResolver
+import com.example.webplaylist.site.Anime1SiteAdapter
 import com.example.webplaylist.site.MyselfBbsSiteAdapter
 import com.example.webplaylist.site.NnyySiteAdapter
 import com.example.webplaylist.site.SiteRegistry
@@ -123,6 +124,7 @@ private fun WebPlaylistApp() {
                     mediaResolver = mediaResolver,
                 ),
                 NnyySiteAdapter(client),
+                Anime1SiteAdapter(client),
             ),
         )
         PlaylistRepository(
@@ -169,6 +171,8 @@ private fun WebPlaylistApp() {
     var seriesActionTarget by remember { mutableStateOf<SavedSeries?>(null) }
     var overlayActivityTick by remember { mutableIntStateOf(0) }
     var backOpenedOverlayAtMs by remember { mutableLongStateOf(0L) }
+    var lanControlAddress by remember { mutableStateOf<String?>(null) }
+    var showLanQrCode by remember { mutableStateOf(false) }
     val rootFocusRequester = remember { FocusRequester() }
     val previousEpisodeFocusRequester = remember { FocusRequester() }
     val playPauseFocusRequester = remember { FocusRequester() }
@@ -224,6 +228,23 @@ private fun WebPlaylistApp() {
         }
 
         loadSeries(normalized)
+    }
+
+    fun openRemoteUrl(rawUrl: String) {
+        val normalized = repository.normalizeUrl(rawUrl.trim())
+        if (!repository.supports(normalized)) {
+            scope.launch {
+                error = "Remote URL is not supported (${repository.supportedUrlHint()})"
+                status = "Remote URL rejected"
+                showPlaylist = true
+            }
+            return
+        }
+        scope.launch {
+            urlInput = normalized
+            showPlaylist = true
+            loadSeries(normalized)
+        }
     }
 
     fun playEpisode(index: Int, resumePositionMs: Long = 0L, sourceStartIndex: Int = 0) {
@@ -282,6 +303,15 @@ private fun WebPlaylistApp() {
 
     LaunchedEffect(Unit) {
         loadSeries(initialSeriesUrl)
+    }
+
+    DisposableEffect(Unit) {
+        val server = LanControlServer(onUrlSubmitted = ::openRemoteUrl)
+        server.start()
+        lanControlAddress = server.address
+        onDispose {
+            server.stop()
+        }
     }
 
     DisposableEffect(player, series, selectedEpisode, loopCurrentEpisode) {
@@ -410,6 +440,7 @@ private fun WebPlaylistApp() {
         seekJob?.cancel()
         seekJob = null
         leftRightPressHandledAsSeek = false
+        showLanQrCode = false
         showPlaylist = false
     }
 
@@ -536,6 +567,13 @@ private fun WebPlaylistApp() {
             .focusRequester(rootFocusRequester)
             .focusable()
             .onPreviewKeyEvent { event ->
+                if (showLanQrCode) {
+                    if (event.type == KeyEventType.KeyDown) {
+                        showLanQrCode = false
+                    }
+                    return@onPreviewKeyEvent true
+                }
+
                 if (event.key == Key.Back && resolvedEpisodeUrl != null) {
                     when (event.type) {
                         KeyEventType.KeyDown -> return@onPreviewKeyEvent true
@@ -740,6 +778,13 @@ private fun WebPlaylistApp() {
                         ) {
                             Text("Open")
                         }
+                        Button(
+                            onClick = { showLanQrCode = true },
+                            enabled = lanControlAddress != null,
+                            colors = translucentButtonColors(),
+                        ) {
+                            Text("QR")
+                        }
                     }
                     Spacer(Modifier.height(6.dp))
                     if (savedSeries.isEmpty()) {
@@ -816,6 +861,17 @@ private fun WebPlaylistApp() {
                     error?.let {
                         Spacer(Modifier.height(6.dp))
                         Text(text = it, color = Color(0xFFFFB199))
+                    }
+                }
+
+                if (showLanQrCode) {
+                    lanControlAddress?.let { address ->
+                        LanAddressQrCode(
+                            address = address,
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .padding(bottom = 170.dp),
+                        )
                     }
                 }
 

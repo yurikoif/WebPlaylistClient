@@ -12,4 +12,5 @@ data class EpisodeSource(
     val label: String,
     val pageUrl: String,
     val mediaUrl: String? = null,
+    val requestData: String? = null,
 )
