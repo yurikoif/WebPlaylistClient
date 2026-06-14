@@ -166,6 +166,7 @@ private fun WebPlaylistApp() {
     var activeSourceIndex by remember { mutableIntStateOf(0) }
     var focusedTransportIcon by remember { mutableStateOf<TransportIcon?>(null) }
     var urlInputFocused by remember { mutableStateOf(false) }
+    var urlInputEditing by remember { mutableStateOf(false) }
     var seriesListFocused by remember { mutableStateOf(false) }
     var playlistFocused by remember { mutableStateOf(false) }
     var seriesActionTarget by remember { mutableStateOf<SavedSeries?>(null) }
@@ -574,6 +575,18 @@ private fun WebPlaylistApp() {
                     return@onPreviewKeyEvent true
                 }
 
+                if (showPlaylist && urlInputFocused && urlInputEditing && event.key == Key.Back) {
+                    when (event.type) {
+                        KeyEventType.KeyDown -> return@onPreviewKeyEvent true
+                        KeyEventType.KeyUp -> {
+                            urlInputEditing = false
+                            overlayActivityTick++
+                            return@onPreviewKeyEvent true
+                        }
+                        else -> return@onPreviewKeyEvent false
+                    }
+                }
+
                 if (event.key == Key.Back && resolvedEpisodeUrl != null) {
                     when (event.type) {
                         KeyEventType.KeyDown -> return@onPreviewKeyEvent true
@@ -733,29 +746,52 @@ private fun WebPlaylistApp() {
                     ) {
                         OutlinedTextField(
                             value = urlInput,
-                            onValueChange = { urlInput = it },
+                            onValueChange = {
+                                if (urlInputEditing) urlInput = it
+                            },
                             modifier = Modifier
                                 .weight(1f)
                                 .focusRequester(urlFocusRequester)
                                 .onFocusChanged {
                                     urlInputFocused = it.isFocused
+                                    if (!it.isFocused) {
+                                        urlInputEditing = false
+                                    }
                                     if (it.isFocused) {
                                         seriesListFocused = false
                                         playlistFocused = false
                                     }
                                 }
                                 .onPreviewKeyEvent { event ->
-                                    if (event.key != Key.DirectionDown) return@onPreviewKeyEvent false
-                                    when (event.type) {
-                                        KeyEventType.KeyDown -> {
-                                            focusSeriesWhenShown = true
-                                            overlayActivityTick++
-                                            true
+                                    when (event.key) {
+                                        Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
+                                            if (urlInputEditing) return@onPreviewKeyEvent false
+                                            when (event.type) {
+                                                KeyEventType.KeyDown -> {
+                                                    urlInputEditing = true
+                                                    overlayActivityTick++
+                                                    true
+                                                }
+                                                KeyEventType.KeyUp -> true
+                                                else -> false
+                                            }
                                         }
-                                        KeyEventType.KeyUp -> true
+                                        Key.DirectionDown -> {
+                                            if (urlInputEditing) return@onPreviewKeyEvent false
+                                            when (event.type) {
+                                                KeyEventType.KeyDown -> {
+                                                    focusSeriesWhenShown = true
+                                                    overlayActivityTick++
+                                                    true
+                                                }
+                                                KeyEventType.KeyUp -> true
+                                                else -> false
+                                            }
+                                        }
                                         else -> false
                                     }
                                 },
+                            readOnly = !urlInputEditing,
                             singleLine = true,
                             label = { Text("Series URL") },
                             colors = OutlinedTextFieldDefaults.colors(
@@ -774,6 +810,7 @@ private fun WebPlaylistApp() {
                         )
                         Button(
                             onClick = { openEnteredUrl() },
+                            modifier = Modifier.height(56.dp),
                             colors = translucentButtonColors(),
                         ) {
                             Text("Open")
@@ -781,6 +818,7 @@ private fun WebPlaylistApp() {
                         Button(
                             onClick = { showLanQrCode = true },
                             enabled = lanControlAddress != null,
+                            modifier = Modifier.height(56.dp),
                             colors = translucentButtonColors(),
                         ) {
                             Text("QR")
