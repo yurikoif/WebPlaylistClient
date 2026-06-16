@@ -24,8 +24,8 @@ class NnyySiteAdapter(
         return when {
             input.startsWith("https://") || input.startsWith("http://") -> input
             input.startsWith("nnyy.in/") -> "https://$input"
-            input.startsWith("/dongman/") -> "https://nnyy.in$input"
-            input.startsWith("dongman/") -> "https://nnyy.in/$input"
+            input.startsWith("/dongman/") || input.startsWith("/dianying/") || input.startsWith("/dianshiju/") -> "https://nnyy.in$input"
+            input.startsWith("dongman/") || input.startsWith("dianying/") || input.startsWith("dianshiju/") -> "https://nnyy.in/$input"
             else -> input
         }
     }
@@ -95,7 +95,7 @@ class NnyySiteAdapter(
 
     private companion object {
         const val USER_AGENT = "Mozilla/5.0"
-        val seriesUrlPattern = Regex("""https?://(?:www\.)?nnyy\.in/dongman/(\d+)\.html""")
+        val seriesUrlPattern = Regex("""https?://(?:www\.)?nnyy\.in/(?:dongman|dianying|dianshiju)/(\d+)\.html""")
         val episodeNumberRegex = Regex("""第\s*(\d+)\s*集""")
     }
 }

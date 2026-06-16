@@ -1,6 +1,7 @@
 package com.example.webplaylist.data
 
 import com.example.webplaylist.model.Episode
+import com.example.webplaylist.site.PaginatedSiteAdapter
 import com.example.webplaylist.site.ResolvedMedia
 import com.example.webplaylist.site.SiteRegistry
 import kotlinx.coroutines.Dispatchers
@@ -21,7 +22,11 @@ class PlaylistRepository(
             siteId = adapter.id,
             siteName = adapter.displayName,
             title = adapter.parseTitle(html, normalizedUrl),
-            episodes = adapter.parseEpisodes(html, normalizedUrl),
+            episodes = if (adapter is PaginatedSiteAdapter) {
+                adapter.parseEpisodesWithPagination(html, normalizedUrl)
+            } else {
+                adapter.parseEpisodes(html, normalizedUrl)
+            },
         )
     }
 

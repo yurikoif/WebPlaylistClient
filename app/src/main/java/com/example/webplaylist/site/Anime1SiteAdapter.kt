@@ -11,11 +11,13 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import org.jsoup.Jsoup
+import org.jsoup.nodes.Document
+import org.jsoup.nodes.Element
 import java.net.URI
 
 class Anime1SiteAdapter(
     private val client: OkHttpClient,
-) : SiteAdapter {
+) : PaginatedSiteAdapter {
     override val id: String = "anime1"
     override val displayName: String = "Anime1"
 
@@ -27,6 +29,7 @@ class Anime1SiteAdapter(
         return when {
             input.startsWith("https://") || input.startsWith("http://") -> input
             input.startsWith("anime1.me/") -> "https://$input"
+            input.startsWith("anime1.in/") -> "https://$input"
             input.startsWith("/category/") -> "https://anime1.me$input"
             input.startsWith("category/") -> "https://anime1.me/$input"
             else -> input
@@ -44,7 +47,33 @@ class Anime1SiteAdapter(
     }
 
     override fun parseEpisodes(html: String, seriesUrl: String): List<Episode> {
-        val document = Jsoup.parse(html, seriesUrl)
+        return parseEpisodesFromDocument(Jsoup.parse(html, seriesUrl), seriesUrl)
+    }
+
+    override suspend fun parseEpisodesWithPagination(html: String, seriesUrl: String): List<Episode> = withContext(Dispatchers.IO) {
+        val firstDocument = Jsoup.parse(html, seriesUrl)
+        val pageUrls = linkedSeriesPageUrls(firstDocument, seriesUrl)
+        val documents = buildList {
+            add(firstDocument)
+            pageUrls.forEach { pageUrl ->
+                val request = Request.Builder()
+                    .url(pageUrl)
+                    .header("User-Agent", USER_AGENT)
+                    .build()
+                val pageHtml = client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@forEach
+                    response.body?.string().orEmpty()
+                }
+                add(Jsoup.parse(pageHtml, pageUrl))
+            }
+        }
+        documents
+            .flatMap { document -> parseEpisodesFromDocument(document, document.location().ifBlank { seriesUrl }) }
+            .distinctBy { it.pageUrl }
+            .sortEpisodes()
+    }
+
+    private fun parseEpisodesFromDocument(document: Document, seriesUrl: String): List<Episode> {
         return document.select("article")
             .mapNotNull { article ->
                 val titleElement = article.selectFirst("h2.entry-title a") ?: return@mapNotNull null
@@ -56,7 +85,23 @@ class Anime1SiteAdapter(
                     ?.attr("data-apireq")
                     ?.trim()
                     ?.takeIf { it.isNotBlank() }
-                    ?: return@mapNotNull null
+                val iframeUrl = article.selectFirst("iframe[src]")
+                    ?.attr("src")
+                    ?.trim()
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { runCatching { URI(seriesUrl).resolve(it).toString() }.getOrNull() }
+                val source = when {
+                    apiRequest != null -> EpisodeSource(
+                        label = "Anime1",
+                        pageUrl = pageUrl,
+                        requestData = apiRequest,
+                    )
+                    iframeUrl != null -> EpisodeSource(
+                        label = "Anime1",
+                        pageUrl = iframeUrl,
+                    )
+                    else -> return@mapNotNull null
+                }
                 val episodeNumber = episodeNumberRegex.find(title)
                     ?.groupValues
                     ?.getOrNull(1)
@@ -65,22 +110,10 @@ class Anime1SiteAdapter(
                     title = title,
                     episodeNumber = episodeNumber,
                     pageUrl = pageUrl,
-                    sources = listOf(
-                        EpisodeSource(
-                            label = "Anime1",
-                            pageUrl = pageUrl,
-                            requestData = apiRequest,
-                        ),
-                    ),
+                    sources = listOf(source),
                 )
             }
-            .let { episodes ->
-                if (episodes.all { it.episodeNumber != null }) {
-                    episodes.sortedBy { it.episodeNumber }
-                } else {
-                    episodes.asReversed()
-                }
-            }
+            .sortEpisodes()
     }
 
     override suspend fun resolveEpisode(
@@ -90,12 +123,36 @@ class Anime1SiteAdapter(
     ): ResolvedMedia = withContext(Dispatchers.IO) {
         val source = episode.sources.drop(sourceStartIndex).firstOrNull()
             ?: error("No Anime1 source found")
-        val apiRequest = source.requestData ?: error("Anime1 source is missing API payload")
+        source.mediaUrl?.let { return@withContext ResolvedMedia(it, sourceStartIndex) }
+
+        val apiRequest = source.requestData
+        if (apiRequest == null) {
+            val request = Request.Builder()
+                .url(source.pageUrl)
+                .header("User-Agent", USER_AGENT)
+                .header("Referer", episode.pageUrl)
+                .build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) error("Anime1 player iframe failed: HTTP ${response.code}")
+                val body = response.body?.string().orEmpty()
+                val mediaUrl = Jsoup.parse(body, source.pageUrl)
+                    .selectFirst("video source[src], source[src]")
+                    ?.attr("abs:src")
+                    ?.trim()
+                    .orEmpty()
+                if (mediaUrl.isBlank()) error("No playable Anime1 iframe source found")
+                return@withContext ResolvedMedia(
+                    url = mediaUrl,
+                    sourceIndex = sourceStartIndex,
+                    requestHeaders = mapOf("Referer" to source.pageUrl),
+                )
+            }
+        }
         val request = Request.Builder()
-            .url(API_URL)
+            .url(apiUrlFor(seriesUrl))
             .header("User-Agent", USER_AGENT)
             .header("Referer", episode.pageUrl)
-            .header("Origin", "https://anime1.me")
+            .header("Origin", originFor(seriesUrl))
             .post("d=$apiRequest".toRequestBody(FORM_MEDIA_TYPE))
             .build()
         client.newCall(request).execute().use { response ->
@@ -108,7 +165,7 @@ class Anime1SiteAdapter(
                 sourceIndex = sourceStartIndex,
                 requestHeaders = buildMap {
                     put("Referer", source.pageUrl)
-                    put("Origin", "https://anime1.me")
+                    put("Origin", originFor(seriesUrl))
                     response.headers("Set-Cookie")
                         .toCookieHeader()
                         .takeIf { it.isNotBlank() }
@@ -116,6 +173,18 @@ class Anime1SiteAdapter(
                 },
             )
         }
+    }
+
+    private fun linkedSeriesPageUrls(document: Document, seriesUrl: String): List<String> {
+        val baseSeriesUrl = seriesUrl.substringBefore("/page/").trimEnd('/') + "/"
+        return document.select(".pagination a[href], .nav-links a[href], a.page-numbers[href]")
+            .mapNotNull { link -> link.absoluteUrl(seriesUrl) }
+            .filter { url -> url.startsWith(baseSeriesUrl) && url != seriesUrl.trimEnd('/') }
+            .distinct()
+    }
+
+    private fun Element.absoluteUrl(baseUrl: String): String? {
+        return runCatching { URI(baseUrl).resolve(attr("href").trim()).toString() }.getOrNull()
     }
 
     private fun Any?.toMediaUrl(): String {
@@ -145,11 +214,30 @@ class Anime1SiteAdapter(
         }.joinToString("; ")
     }
 
+    private fun List<Episode>.sortEpisodes(): List<Episode> {
+        return if (all { it.episodeNumber != null }) {
+            sortedBy { it.episodeNumber }
+        } else {
+            asReversed()
+        }
+    }
+
+    private fun apiUrlFor(seriesUrl: String): String {
+        return "https://v.${hostFor(seriesUrl)}/api"
+    }
+
+    private fun originFor(seriesUrl: String): String {
+        return "https://${hostFor(seriesUrl)}"
+    }
+
+    private fun hostFor(seriesUrl: String): String {
+        return URI(seriesUrl).host?.removePrefix("www.") ?: "anime1.me"
+    }
+
     private companion object {
-        const val API_URL = "https://v.anime1.me/api"
         const val USER_AGENT = "Mozilla/5.0"
         val FORM_MEDIA_TYPE = "application/x-www-form-urlencoded".toMediaType()
-        val seriesUrlPattern = Regex("""https?://(?:www\.)?anime1\.me/category/.+""")
+        val seriesUrlPattern = Regex("""https?://(?:www\.)?anime1\.(?:me|in)/(?:category/.+|[^/?#]+/?(?:page/\d+/?){0,1})""")
         val episodeNumberRegex = Regex("""\[(\d+)""")
     }
 }

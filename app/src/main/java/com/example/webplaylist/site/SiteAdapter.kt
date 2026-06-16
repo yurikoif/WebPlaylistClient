@@ -17,6 +17,10 @@ interface SiteAdapter {
     suspend fun resolveEpisode(episode: Episode, seriesUrl: String, sourceStartIndex: Int = 0): ResolvedMedia
 }
 
+interface PaginatedSiteAdapter : SiteAdapter {
+    suspend fun parseEpisodesWithPagination(html: String, seriesUrl: String): List<Episode>
+}
+
 data class ResolvedMedia(
     val url: String,
     val sourceIndex: Int,
